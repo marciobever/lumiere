@@ -29,24 +29,44 @@ import {
   Upload,
   CheckCircle,
   HelpCircle,
-  Lightbulb
+  Lightbulb,
+  Github,
+  FileJson,
+  FolderOpen,
+  Database
 } from 'lucide-react';
 import { MuseProfile, ViewState, DashboardInputs } from './types';
 
+// --- CONFIGURATION ---
+// IMPORTANTE: Substitua pelo seu ID de Publicador do AdSense
+const ADSENSE_PUB_ID = "ca-pub-0000000000000000"; 
+
 // --- INITIAL DATA & STORAGE ---
 const INITIAL_MUSES: MuseProfile[] = [];
-const STORAGE_KEY = 'LUMIERE_MUSES_DB_V3'; // Versioned key
+const STORAGE_KEY = 'LUMIERE_MUSES_DB_V4'; // Local drafts
+const DB_INDEX_FILENAME = 'db_index.json'; // The "Map" of the database
+const DB_FOLDER = 'database'; // The folder where individual JSONs live
 
 // --- HELPER: Safe Storage ---
-const saveToStorage = (muses: MuseProfile[]) => {
+const saveToLocalStorage = (muses: MuseProfile[]) => {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(muses));
   } catch (e: any) {
-    if (e.name === 'QuotaExceededError') {
-      alert("⚠️ Limite de armazenamento do navegador atingido! Por favor, exporte seus dados (Baixar JSON) e limpe alguns perfis antigos para continuar gerando.");
-    } else {
-      console.error("Erro ao salvar no LocalStorage:", e);
-    }
+    console.error("Erro ao salvar no LocalStorage:", e);
+  }
+};
+
+// --- HELPER: Clean JSON Parsing ---
+const cleanAndParseJSON = (text: string) => {
+  try {
+    // Remove markdown code blocks if present
+    let clean = text.replace(/```json/g, '').replace(/```/g, '');
+    // Remove formatting asterisks just in case
+    clean = clean.replace(/\*\*/g, ''); 
+    return JSON.parse(clean);
+  } catch (e) {
+    console.error("Failed to parse JSON", e);
+    return {};
   }
 };
 
@@ -92,44 +112,33 @@ const MuseSkeleton = () => (
   </div>
 );
 
-// --- SMART AD UNIT ---
-const SmartAdUnit: React.FC<{ format: 'billboard' | 'rectangle' | 'vertical' | 'fluid' }> = ({ format }) => {
-  const [isVisible, setIsVisible] = useState(false);
+// --- SMART AD UNIT (ADSENSE IMPLEMENTATION) ---
+const SmartAdUnit: React.FC<{ slotId: string; format: 'auto' | 'fluid' | 'rectangle'; className?: string }> = ({ slotId, format, className }) => {
   const adRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setIsVisible(true);
-          observer.disconnect();
-        }
-      },
-      { threshold: 0.1 }
-    );
-
-    if (adRef.current) observer.observe(adRef.current);
-    return () => observer.disconnect();
-  }, []);
-
-  const dimensions = {
-    billboard: "w-full max-w-4xl h-[250px]",
-    rectangle: "w-full max-w-[336px] h-[280px]",
-    vertical: "w-full h-[600px]",
-    fluid: "w-full h-[150px]"
-  };
+    // Only push if not already loaded in this specific ref instance to avoid React strict mode duplicates
+    // However, basic push is usually safe as AdSense handles duplicates.
+    try {
+        // @ts-ignore
+        (window.adsbygoogle = window.adsbygoogle || []).push({});
+    } catch (e) {
+        console.error("AdSense push error", e);
+    }
+  }, [slotId]);
 
   return (
-    <div ref={adRef} className={`bg-gray-900/30 flex items-center justify-center border border-white/5 my-12 mx-auto ${dimensions[format]} relative overflow-hidden group`}>
-      {isVisible ? (
-        <div className="text-center animate-pulse p-4 w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-gray-900 to-black">
-          <span className="text-[10px] text-gray-600 uppercase tracking-widest block mb-1">Publicidade Premium</span>
-          <div className="w-12 h-1 bg-yellow-600/20 mb-2"></div>
-          <span className="text-yellow-600/30 text-[9px] uppercase font-bold">Espaço Disponível</span>
-        </div>
-      ) : (
-        <div className="w-full h-full bg-transparent" />
-      )}
+    <div className={`my-16 flex flex-col items-center justify-center relative overflow-hidden ${className}`}>
+      <div className="w-full text-center">
+        <span className="text-[9px] text-gray-700 uppercase tracking-widest block mb-2 opacity-50">Publicidade</span>
+        <ins className="adsbygoogle"
+             style={{ display: 'block', textAlign: 'center', minHeight: format === 'fluid' ? '100px' : '250px' }}
+             data-ad-client={ADSENSE_PUB_ID}
+             data-ad-slot={slotId}
+             data-ad-format={format === 'fluid' ? 'fluid' : 'auto'}
+             data-ad-layout={format === 'fluid' ? 'in-article' : undefined}
+             data-full-width-responsive="true"></ins>
+      </div>
     </div>
   );
 };
@@ -287,30 +296,24 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
       </div>
 
       <div className="bg-[#050505] text-gray-200 py-12 md:py-24 px-6 md:px-12 relative z-30">
-        <div className="container mx-auto max-w-6xl">
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-16 lg:gap-32">
-            <div className="lg:col-span-3 hidden lg:block">
-              <div className="sticky top-32 space-y-12">
-                <div className="border-t border-b border-white/10 py-8">
-                  <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4">Perfil da Musa</p>
-                  <h3 className="font-serif text-3xl text-white mb-3">{profile.name}</h3>
-                  <p className="text-sm text-gray-400 italic mb-6 leading-relaxed">{profile.tagline}</p>
-                  <div className="flex gap-6"><Instagram size={20} className="text-gray-500 hover:text-yellow-600 cursor-pointer transition-colors" /><Share2 size={20} className="text-gray-500 hover:text-yellow-600 cursor-pointer transition-colors" /></div>
-                </div>
-                <SmartAdUnit format="vertical" />
-              </div>
-            </div>
-            <div className="lg:col-span-8 lg:col-start-5">
+        <div className="container mx-auto max-w-5xl">
+          <div className="flex flex-col gap-12">
+            
+            {/* CONTENT START */}
+            <div className="prose prose-invert prose-lg max-w-none">
               <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 first-letter:text-7xl first-letter:font-serif first-letter:text-yellow-600 first-letter:float-left first-letter:mr-4 first-letter:mt-[-8px] mb-12 font-light tracking-wide">{profile.content.bodyParagraphs[0]}</p>
               
+              {/* AD SLOT 1: Top (Display Horizontal) */}
+              <SmartAdUnit slotId="1624191321" format="auto" className="w-full max-w-4xl mx-auto" />
+
               {/* Body Image 1 (Lazy) */}
               <div className="my-16 relative group overflow-hidden shadow-2xl border border-white/5">
                 <OptimizedImage src={profile.images[0]} className="w-full h-[400px] md:h-[800px] object-cover transition-transform duration-1000 group-hover:scale-105" alt="Editorial 1" />
               </div>
 
               <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-12 tracking-wide font-light">{profile.content.bodyParagraphs[1]}</p>
-              <div className="my-16"><SmartAdUnit format="billboard" /></div>
               <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-16 tracking-wide font-light">{profile.content.bodyParagraphs[2]}</p>
+              
               <div className="my-20 p-6 md:p-10 bg-gradient-to-r from-yellow-900/20 to-black border border-yellow-600/30 rounded-lg relative overflow-hidden">
                  <div className="absolute top-0 right-0 p-4 opacity-10"><Lightbulb size={120} className="text-yellow-600" /></div>
                  <h4 className="text-yellow-500 font-bold uppercase tracking-widest text-sm mb-4 flex items-center gap-2"><Lock size={14} /> Segredo de Mercado</h4>
@@ -318,6 +321,9 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
                  <p className="text-lg text-gray-100 leading-relaxed relative z-10 font-medium">{profile.content.insiderSecret}</p>
                  <div className="mt-8 flex gap-3 flex-wrap">{profile.content.keywords.slice(0,3).map(kw => (<span key={kw} className="text-xs bg-yellow-600/10 text-yellow-500 px-3 py-1 rounded border border-yellow-600/20">{kw}</span>))}</div>
               </div>
+
+              {/* AD SLOT 2: Mid (Native In-Article) */}
+              <SmartAdUnit slotId="6844728415" format="fluid" className="w-full" />
 
               {/* Grid Images (Lazy) */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8 my-20">
@@ -331,7 +337,10 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
 
               <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-12 tracking-wide font-light">{profile.content.bodyParagraphs[3]}</p>
               <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-12 tracking-wide font-light">{profile.content.bodyParagraphs[4]}</p>
-              <div className="my-16"><SmartAdUnit format="fluid" /></div>
+              
+              {/* AD SLOT 3: Bottom (Rectangle) */}
+              <SmartAdUnit slotId="1006896613" format="auto" className="w-full max-w-[336px] mx-auto" />
+
               <div className="my-24 border-l-4 border-white pl-8 md:pl-12 py-4">
                  <h3 className="font-serif text-3xl text-white mb-6">O Veredito da Lumière</h3>
                  <p className="text-xl text-gray-200 italic font-serif leading-relaxed">"{profile.content.expertVerdict}"</p>
@@ -349,6 +358,7 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
               )}
             </div>
           </div>
+
           <div className="border-t border-white/10 pt-24 mt-12">
             <h3 className="font-serif text-4xl md:text-5xl text-white text-center mb-16">Galeria Exclusiva</h3>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 auto-rows-[250px] md:auto-rows-[300px]">
@@ -414,13 +424,13 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => void; onDelete: (
     const randomEthnicity = ethnicities[Math.floor(Math.random() * ethnicities.length)];
     const randomHair = hairStyles[Math.floor(Math.random() * hairStyles.length)];
     const randomFeature = distinctFeatures[Math.floor(Math.random() * distinctFeatures.length)];
-    const physicalPrompt = `Woman of ${randomEthnicity} descent, featuring ${randomHair} and ${randomFeature}. Luxury fashion model look.`;
+    const physicalPrompt = `Extremely beautiful Woman of ${randomEthnicity} descent, featuring ${randomHair} and ${randomFeature}. Luxury high-fashion model look, fit physique, hourglass figure, drop-dead gorgeous.`;
 
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
       const prompt = `Gere um perfil JSON para uma modelo 'Femme Fatale' de luxo para um site de alto CPM. O nicho deve ser EXTREMAMENTE valioso e específico (Ex: Mesotelioma, Empréstimos Estudantis, Cloud Computing, Forex Trading). NÃO GERE A DESCRIÇÃO FÍSICA. USE ESTA: "${physicalPrompt}". Retorne APENAS um JSON: {"name": "Nome Elegante", "niche": "Nicho High Ticket", "details": "${physicalPrompt}"}`;
       const result = await ai.models.generateContent({ model: "gemini-2.5-flash", contents: prompt, config: { responseMimeType: "application/json" } });
-      const data = JSON.parse(result.text || "{}");
+      const data = cleanAndParseJSON(result.text || "{}");
       setInputs({ name: data.name, niche: data.niche, details: physicalPrompt });
       addLog(`DNA: ${randomEthnicity} + ${randomHair}`);
       addLog(`Persona: ${data.name} - ${data.niche}`);
@@ -434,13 +444,41 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => void; onDelete: (
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
       addLog("Escrevendo artigo de 6 parágrafos + FAQ...");
-      // UPDATED PROMPT: Explicitly forbid Markdown and Asterisks
-      const textPrompt = `Crie um perfil editorial para "${inputs.name}" especialista em "${inputs.niche}". Idioma: PT-BR. Conteúdo denso, High CTR. Texto PURO (Plain Text), SEM Markdown, SEM asteriscos (**), SEM formatação. JSON: {"tagline": "Frase", "title": "Título Clickbait", "intro": "Intro", "bodyParagraphs": ["Técnico", "Lifestyle", "Estratégia", "Análise", "Nuance", "Conclusão"], "keywords": ["5 keywords"], "expertVerdict": "Resumo autoridade", "faqs": [{"question": "Q?", "answer": "A"}], "insiderSecret": "Dica oculta"}`;
+      
+      // UPDATED PROMPT: More Explicit about Tone and stricter on JSON
+      const textPrompt = `You are a top-tier lifestyle editor for a luxury men's magazine (like GQ/Maxim/Vogue).
+      Create a JSON profile for "${inputs.name}", a specialist in "${inputs.niche}".
+      Language: PT-BR (Portuguese).
+      
+      TONE: Extroverted, seductive, smart, and "spicy" (flirty, use double entendres, confident, but STRICTLY NO PORNOGRAPHY/NSFW/EXPLICIT TERMS). She should sound like a high-end consultant who is also incredibly charming.
+      CONTENT: Dense, valuable information about the niche, mixed with personal anecdotes.
+      
+      FORMAT: PLAIN JSON ONLY. NO Markdown (\`\`\`), NO asterisks (**).
+      
+      Schema:
+      {
+        "tagline": "Short, catchy, seductive phrase",
+        "title": "Clickbait High-CTR Title",
+        "intro": "Seductive introduction",
+        "bodyParagraphs": [
+           "Paragraph 1: Introduction to the niche topic (Technical/Smart)",
+           "Paragraph 2: Lifestyle angle (Luxury/Travel)",
+           "Paragraph 3: Deep dive strategy (Valuable info)",
+           "Paragraph 4: A personal/spicy anecdote related to the topic",
+           "Paragraph 5: Expert analysis",
+           "Paragraph 6: Seductive conclusion"
+        ],
+        "keywords": ["5 high value keywords"],
+        "expertVerdict": "Authoritative summary",
+        "faqs": [{"question": "Specific Q?", "answer": "Detailed A"}],
+        "insiderSecret": "A very specific, high-value secret about the niche"
+      }`;
+
       const textResult = await ai.models.generateContent({ model: "gemini-2.5-flash", contents: textPrompt, config: { responseMimeType: "application/json" } });
-      const content = JSON.parse(textResult.text || "{}");
+      const content = cleanAndParseJSON(textResult.text || "{}");
 
       addLog("Fotografando capa (Raw Candid)...");
-      const basePrompt = `Portrait of a woman (${inputs.details}). Photorealistic, 8k, shot on Fujifilm Pro 400H, 85mm lens, f/1.8. Raw candid photograph, micro-expressions, real skin texture with faint freckles/pores, natural lighting, cinematic lens flare. NOT illustration, NOT drawing.`;
+      const basePrompt = `Portrait of a woman (${inputs.details}). Style: Raw candid, grainy film look, real skin texture with faint freckles/pores, natural lighting, cinematic lens flare, high-end fashion/lingerie (SFW), seductive gaze. Photorealistic, 8k, shot on Fujifilm Pro 400H, 85mm lens, f/1.8. NOT illustration.`;
       const coverResult = await ai.models.generateContent({ model: "gemini-2.5-flash-image", contents: basePrompt });
       const extractImage = (res: any) => res.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData)?.inlineData?.data;
       const coverBase64 = extractImage(coverResult);
@@ -450,37 +488,32 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => void; onDelete: (
       addLog("Produzindo editorial variado (7 fotos)...");
       const galleryImages = [coverImage];
       const allScenarios = [
-          // Intimate / Home / Morning
-          "Wearing a white silk robe, sitting on a messy bed in a luxury hotel room, morning light, coffee cup",
-          "Lying on white sheets in a sunlit bedroom, wearing a satin camisole, relaxed pose, soft focus",
-          "Sitting on a velvet sofa in a penthouse, wearing a cozy oversized cashmere sweater, reading a book",
-          "Standing in a marble bathroom, wearing a towel turban and bathrobe, applying skincare, spa vibe",
-          "Lounging on a window seat wrapped in a blanket, looking out at rain, wearing comfortable loungewear",
-          "Waking up, stretching in bed, wearing lace pajamas, golden morning hour light",
+          // Intimate / Home / Morning (Spicy)
+          "Wearing a silk robe slightly open, sitting on a messy bed in a luxury hotel room, morning light, seductive smile",
+          "Lying on white sheets, wearing lace lingerie (SFW), looking at camera, soft focus, intimate atmosphere",
+          "Sitting on a velvet sofa, wearing an oversized shirt and nothing else visible, holding a wine glass, flirty look",
+          "Standing in a marble bathroom, wearing a towel turban and a silk slip dress, applying lipstick in mirror",
+          "Waking up, stretching in bed, wearing sheer pajamas (SFW), golden hour light hitting skin",
 
-          // Social / Nightlife / Dining
-          "Wearing a velvet cocktail dress, sitting at a dimly lit jazz bar, holding a martini, moody lighting",
-          "Wearing a red backless evening gown, standing on a rooftop balcony at night, city lights background, holding champagne",
-          "Sitting at a fine dining restaurant table, candlelight, wearing a black slip dress, smiling at camera",
-          "Dancing in a VIP club booth, wearing a sequin mini dress, neon lights, dynamic motion",
-          "Laughing in the back of a luxury limousine, wearing a faux fur coat over a party dress, holding a flute",
-          "Attending a gallery opening, wearing an avant-garde outfit, holding a program, art background",
+          // Social / Nightlife / Dining (Glamour)
+          "Wearing a red backless evening gown, looking back over shoulder, rooftop bar at night, city lights",
+          "Sitting at a fine dining restaurant, candlelight, wearing a black dress with deep neckline, holding a martini",
+          "Dancing in a VIP booth, wearing a sequin mini dress, blurred lights, energetic and fun",
+          "Inside a luxury limousine, wearing a faux fur coat over a cocktail dress, laughing, holding champagne",
 
-          // Outdoor / Travel / Luxury
-          "Wearing a white bikini and sheer sarong, walking on a private beach at sunset, wind in hair, golden hour",
-          "Lounging on the deck of a superyacht, wearing a linen shirt and shorts, sunglasses, blue ocean background",
-          "Driving a vintage convertible car along a coastal road, wearing a headscarf and sunglasses, motion blur",
-          "Playing tennis on a clay court, wearing a white tennis skirt and polo, sunny afternoon",
-          "Walking out of a high-end boutique with shopping bags, wearing a trench coat and boots, street style",
-          "Relaxing by an infinity pool, wearing a wide-brimmed hat and swimsuit, turquoise water",
-          "Walking in a snowy street, wearing a stylish winter coat and beanie, cold breath visible, winter wonderland",
-          "Riding a horse on a ranch, wearing equestrian gear, nature background"
+          // Outdoor / Travel / Luxury (Lifestyle)
+          "Wearing a bikini (SFW), walking out of the ocean at sunset, wet hair, golden hour, Bond Girl vibe",
+          "Lounging on a yacht deck, wearing a white linen shirt unbuttoned over swimwear, sunglasses, blue ocean",
+          "Driving a vintage convertible, wearing a headscarf and sunglasses, wind in hair, cinematic style",
+          "Relaxing by an infinity pool, wearing a wide-brimmed hat and swimsuit, sipping a cocktail",
+          "Walking in a city street, wearing a trench coat, confident strut, paparazzi style shot"
       ];
+      // Pick 7 random scenarios
       const selectedScenarios = allScenarios.sort(() => 0.5 - Math.random()).slice(0, 7);
 
       for (const scenario of selectedScenarios) {
         addLog(`Capturando: ${scenario.substring(0, 30)}...`);
-        const galleryPrompt = `Photo of the SAME woman (${inputs.details}). Scene: ${scenario}. Style: Raw candid, grainy film look, real skin texture, hyper realistic. NOT illustration.`;
+        const galleryPrompt = `Photo of the SAME woman (${inputs.details}). Scene: ${scenario}. Style: Raw candid, grainy film look, real skin texture, hyper realistic. NOT illustration, NOT nude, but spicy/seductive.`;
         const res = await ai.models.generateContent({ model: "gemini-2.5-flash-image", contents: galleryPrompt });
         const imgBase64 = extractImage(res);
         if (imgBase64) galleryImages.push(`data:image/png;base64,${imgBase64}`);
@@ -502,18 +535,64 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => void; onDelete: (
       setInputs({ niche: '', name: '', details: '' });
     } catch (err) { console.error(err); addLog(`ERRO FATAL: ${(err as Error).message}`); } finally { setLoading(false); }
   };
+  
+  const handleDownloadSingle = (muse: MuseProfile) => {
+    const blob = new Blob([JSON.stringify(muse, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; 
+    a.download = `${muse.id}.json`; 
+    a.click();
+  };
+
+  const handleDownloadIndex = () => {
+    const ids = muses.map(m => m.id);
+    const blob = new Blob([JSON.stringify(ids, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = DB_INDEX_FILENAME;
+    a.click();
+  };
 
   return (
     <div className="bg-[#111] min-h-screen pt-32 pb-20 px-6">
       <div className="container mx-auto max-w-4xl">
         <h2 className="text-4xl text-white font-serif mb-8 flex items-center gap-4"><LayoutDashboard className="text-yellow-600" /> Painel de Criação</h2>
-        <div className="bg-gray-900 p-6 rounded-lg border border-white/10 mb-12 flex flex-wrap gap-4 items-center justify-between">
-           <div><h3 className="text-white font-bold uppercase tracking-widest text-sm mb-1">Banco de Dados</h3><p className="text-gray-500 text-xs">Salve ou restaure seus perfis.</p></div>
-           <div className="flex gap-4">
-              <button onClick={onExport} className="flex items-center gap-2 px-4 py-2 bg-black border border-white/20 text-white rounded hover:border-yellow-600 transition-colors text-sm font-bold uppercase tracking-wide"><Download size={16} /> Baixar JSON</button>
-              <label className="flex items-center gap-2 px-4 py-2 bg-yellow-600 text-black rounded hover:bg-yellow-500 transition-colors text-sm font-bold uppercase tracking-wide cursor-pointer"><Upload size={16} /> Importar JSON<input type="file" accept=".json" onChange={onImport} className="hidden" /></label>
+        
+        {/* INSTRUCTIONS BOX */}
+        <div className="bg-yellow-900/10 border border-yellow-600/30 p-6 rounded-lg mb-8">
+           <h3 className="text-yellow-500 font-bold uppercase tracking-widest text-sm mb-3 flex items-center gap-2"><Github size={16} /> Nova Estrutura de Pastas (Split Database)</h3>
+           <div className="flex flex-col md:flex-row gap-8">
+              <div className="flex-1">
+                 <p className="text-sm text-gray-300 mb-2">Para otimizar o carregamento, agora salvamos um arquivo por modelo.</p>
+                 <ol className="list-decimal list-inside text-sm text-gray-400 space-y-2 font-mono">
+                    <li>Crie uma pasta chamada <span className="text-white font-bold">database</span> no seu GitHub.</li>
+                    <li>Baixe o <span className="text-white font-bold">JSON Individual</span> de cada modelo.</li>
+                    <li>Faça upload deles para dentro da pasta <span className="text-yellow-500">database/</span>.</li>
+                    <li>Por fim, baixe o <span className="text-white font-bold">Arquivo de Índice</span> e coloque na raiz (junto com index.html).</li>
+                 </ol>
+              </div>
+              <div className="flex-1 bg-black/50 p-4 rounded border border-white/5 font-mono text-xs text-gray-500">
+                <p>root/</p>
+                <p className="pl-4">├── index.html</p>
+                <p className="pl-4 text-yellow-500">├── db_index.json (Lista de IDs)</p>
+                <p className="pl-4">└── <span className="text-yellow-500">database/</span></p>
+                <p className="pl-8 text-yellow-500">├── 170933.json</p>
+                <p className="pl-8 text-yellow-500">└── 170934.json</p>
+              </div>
            </div>
         </div>
+
+        <div className="bg-gray-900 p-6 rounded-lg border border-white/10 mb-12 flex flex-wrap gap-4 items-center justify-between">
+           <div><h3 className="text-white font-bold uppercase tracking-widest text-sm mb-1">Gerenciamento de Dados</h3><p className="text-gray-500 text-xs">Total: {muses.length} modelos</p></div>
+           <div className="flex gap-4">
+              <button onClick={handleDownloadIndex} className="flex items-center gap-2 px-6 py-3 bg-white text-black hover:bg-yellow-500 transition-colors text-sm font-bold uppercase tracking-wide rounded-sm shadow-lg"><Database size={18} /> Baixar Índice (db_index.json)</button>
+              {/* Fallback to bulk if needed, keeping it hidden or secondary */}
+              {/* <button onClick={onExport} className="text-gray-500 text-xs hover:text-white">Backup Completo</button> */}
+           </div>
+        </div>
+
         <div className="bg-gray-900/50 p-8 rounded-xl border border-white/10 shadow-2xl relative overflow-hidden">
            <button onClick={generateRandomPersona} disabled={loading} className="absolute top-8 right-8 text-yellow-600 hover:text-white flex items-center gap-2 text-xs font-bold uppercase tracking-widest transition-colors z-10"><Wand2 size={16} /> Surpreenda-me</button>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
@@ -524,11 +603,20 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => void; onDelete: (
           <button onClick={handleGenerate} disabled={loading} className="w-full mt-8 bg-white text-black font-bold uppercase tracking-[0.2em] py-5 hover:bg-yellow-600 transition-colors disabled:opacity-50">{loading ? <span className="flex items-center justify-center gap-3"><Loader2 className="animate-spin" /> Produzindo Conteúdo...</span> : 'Gerar Perfil Completo'}</button>
           {logs.length > 0 && <div className="mt-8 bg-black p-4 rounded border border-white/10 font-mono text-xs text-green-500 max-h-40 overflow-y-auto">{logs.map((log, i) => <div key={i}>{log}</div>)}</div>}
         </div>
-        <div className="mt-12 grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="mt-12 grid grid-cols-1 gap-4">
           {muses.map(muse => (
-             <div key={muse.id} className="flex items-center justify-between bg-gray-900 p-4 rounded border border-white/5">
-                <div className="flex items-center gap-4"><img src={muse.coverImage} className="w-12 h-12 rounded-full object-cover" /><div><h4 className="text-white font-bold">{muse.name}</h4><p className="text-xs text-gray-500">{muse.niche}</p></div></div>
-                <button onClick={() => onDelete(muse.id)} className="text-red-500 hover:text-red-400 p-2"><Trash2 size={18} /></button>
+             <div key={muse.id} className="flex items-center justify-between bg-gray-900 p-4 rounded border border-white/5 hover:border-yellow-600/50 transition-colors group">
+                <div className="flex items-center gap-4">
+                  <img src={muse.coverImage} className="w-12 h-12 rounded-full object-cover border border-white/10" />
+                  <div>
+                    <h4 className="text-white font-bold">{muse.name}</h4>
+                    <p className="text-xs text-gray-500">{muse.niche} <span className="text-gray-700 mx-2">|</span> ID: {muse.id}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                   <button onClick={() => handleDownloadSingle(muse)} className="flex items-center gap-2 px-3 py-2 bg-black border border-white/20 text-white hover:text-yellow-500 hover:border-yellow-500 transition-colors text-xs font-bold uppercase tracking-wide rounded"><FileJson size={14} /> JSON</button>
+                   <button onClick={() => onDelete(muse.id)} className="text-gray-600 hover:text-red-500 p-2 transition-colors"><Trash2 size={18} /></button>
+                </div>
              </div>
           ))}
         </div>
@@ -549,39 +637,74 @@ const App: React.FC = () => {
   const [filteredMuses, setFilteredMuses] = useState<MuseProfile[]>([]);
   const [isSearching, setIsSearching] = useState(false);
 
-  // Initialize Data (LocalStorage OR Static JSON)
+  // --- SPLIT DATABASE STRATEGY ---
+  // 1. Fetch `db_index.json` from root
+  // 2. Iterate list and fetch `database/{id}.json` in parallel
+  // 3. Merge with local storage
   useEffect(() => {
     const initData = async () => {
+      let combinedMuses: MuseProfile[] = [];
+      const seenIds = new Set<string>();
+
       try {
-        // Priority 1: Check LocalStorage (Recent edits)
-        const stored = localStorage.getItem(STORAGE_KEY);
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (parsed.length > 0) {
-            setMuses(parsed);
-            setFilteredMuses(parsed);
-            setLoading(false);
-            return;
-          }
-        }
+        // Step 1: Fetch Index
+        // Add timestamp to prevent caching the index
+        const indexRes = await fetch(`./${DB_INDEX_FILENAME}?t=${Date.now()}`);
         
-        // Priority 2: Fetch static JSON file (GitHub/Deployment)
-        // Ensure you rename your exported file to 'lumiere_db.json' and place it in the public folder
-        const response = await fetch('./lumiere_db.json');
-        if (response.ok) {
-          const externalData = await response.json();
-          if (Array.isArray(externalData) && externalData.length > 0) {
-             setMuses(externalData);
-             setFilteredMuses(externalData);
-             // Save to storage so edits are persistent from this point
-             saveToStorage(externalData);
-          }
+        if (indexRes.ok) {
+          const ids: string[] = await indexRes.json();
+          console.log(`Index found with ${ids.length} entries. Fetching files...`);
+
+          // Step 2: Parallel Fetch of all ID files
+          const promises = ids.map(id => 
+             fetch(`./${DB_FOLDER}/${id}.json`)
+                .then(r => {
+                   if (!r.ok) throw new Error(`File ${id} missing`);
+                   return r.json();
+                })
+                .catch(err => {
+                   console.warn(`Failed to load ${id}:`, err);
+                   return null;
+                })
+          );
+
+          const results = await Promise.all(promises);
+          
+          results.forEach((m) => {
+             if (m && m.id && !seenIds.has(m.id)) {
+                combinedMuses.push(m);
+                seenIds.add(m.id);
+             }
+          });
+        } else {
+           console.warn("db_index.json not found. Running in offline/local-only mode.");
         }
       } catch (e) { 
-        console.warn("Nenhum banco de dados encontrado. Iniciando vazio.", e); 
-      } finally {
-        setLoading(false);
+        console.warn("Could not load static DB structure:", e); 
       }
+
+      // Step 3: Merge with LocalStorage (User's private drafts/new creations)
+      try {
+        const localData = localStorage.getItem(STORAGE_KEY);
+        if (localData) {
+          const parsed = JSON.parse(localData);
+          if (Array.isArray(parsed)) {
+            parsed.forEach(m => {
+              if (!seenIds.has(m.id)) {
+                combinedMuses.unshift(m); // Add local drafts to TOP
+                seenIds.add(m.id);
+              }
+            });
+          }
+        }
+      } catch (e) {
+        console.warn("Local storage error:", e);
+      }
+
+      // Final Set
+      setMuses(combinedMuses);
+      setFilteredMuses(combinedMuses);
+      setLoading(false);
     };
     
     initData();
@@ -589,7 +712,7 @@ const App: React.FC = () => {
 
   // Filter Logic with simulated delay
   useEffect(() => {
-    if (loading) return; // Skip if initial load not done
+    if (loading) return; 
     
     setIsSearching(true);
     const delayDebounceFn = setTimeout(() => {
@@ -605,24 +728,25 @@ const App: React.FC = () => {
         setFilteredMuses(results);
       }
       setIsSearching(false);
-    }, 500); // 500ms delay to simulate search processing/network
+    }, 500); 
 
     return () => clearTimeout(delayDebounceFn);
   }, [searchTerm, muses, loading]);
 
-  // Save on Change (with safe wrapper)
+  // Save to LocalStorage whenever state changes (keeps drafts safe)
   useEffect(() => {
-    if (!loading && muses.length > 0) saveToStorage(muses);
+    if (!loading) saveToLocalStorage(muses);
   }, [muses, loading]);
 
   const handleCreateMuse = (newMuse: MuseProfile) => setMuses(prev => [newMuse, ...prev]);
   const handleDeleteMuse = (id: string) => setMuses(prev => prev.filter(m => m.id !== id));
   
+  // Kept for backward compatibility or full backup if user wants it
   const handleExportDB = () => {
-     const blob = new Blob([JSON.stringify(muses)], { type: "application/json" });
+     const blob = new Blob([JSON.stringify(muses, null, 2)], { type: "application/json" });
      const url = URL.createObjectURL(blob);
      const a = document.createElement("a");
-     a.href = url; a.download = "lumiere_db.json";
+     a.href = url; a.download = "full_backup_legacy.json"; 
      a.click();
   };
 
@@ -634,9 +758,13 @@ const App: React.FC = () => {
       try {
         const imported = JSON.parse(event.target?.result as string);
         if (Array.isArray(imported)) {
-           setMuses(imported);
-           saveToStorage(imported);
-           alert("Importação realizada com sucesso!");
+           // Merge strategy: Add imported ones to current state
+           setMuses(prev => {
+             const existingIds = new Set(prev.map(m => m.id));
+             const newOnes = imported.filter((m: any) => !existingIds.has(m.id));
+             return [...newOnes, ...prev];
+           });
+           alert(`Importado com sucesso! ${imported.length} perfis carregados.`);
         }
       } catch (err) { alert("Erro ao importar arquivo."); }
     };
