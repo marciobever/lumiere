@@ -145,6 +145,9 @@ const cleanAndParseJSON = (text: string) => {
   }
 };
 
+// --- HELPER: Delay for Rate Limiting ---
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 // --- OPTIMIZED IMAGE COMPONENT ---
 const OptimizedImage: React.FC<{ 
   src: string; 
@@ -650,6 +653,10 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
       if (!coverBase64) throw new Error("Falha na capa");
       const coverImage = `data:image/png;base64,${coverBase64}`;
 
+      // --- THROTTLE (DELAY) 1 ---
+      addLog("Aguardando 12 segundos (Rate Limit Protection)...");
+      await delay(12000);
+
       addLog("Produzindo editorial variado (5 fotos)...");
       const galleryImages = [coverImage];
       const allScenarios = [
@@ -666,14 +673,37 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
 
       for (const scenario of selectedScenarios) {
         addLog(`Capturando: ${scenario}...`);
-        const galleryPrompt = `Photo of the SAME woman (${inputs.details}). 
-        Scene: ${scenario}. 
-        Style: High-fashion editorial, shot on Kodak Portra 400, 35mm film grain, flash photography. 
-        Quality: Photorealistic, 8k, raw file.`;
         
-        const res = await ai.models.generateContent({ model: "gemini-2.5-flash-image", contents: galleryPrompt });
-        const imgBase64 = extractImage(res);
-        if (imgBase64) galleryImages.push(`data:image/png;base64,${imgBase64}`);
+        let retries = 0;
+        let success = false;
+        
+        while (!success && retries < 2) {
+            try {
+              const galleryPrompt = `Photo of the SAME woman (${inputs.details}). 
+              Scene: ${scenario}. 
+              Style: High-fashion editorial, shot on Kodak Portra 400, 35mm film grain, flash photography. 
+              Quality: Photorealistic, 8k, raw file.`;
+              
+              const res = await ai.models.generateContent({ model: "gemini-2.5-flash-image", contents: galleryPrompt });
+              const imgBase64 = extractImage(res);
+              if (imgBase64) galleryImages.push(`data:image/png;base64,${imgBase64}`);
+              
+              success = true;
+              
+              // --- THROTTLE (DELAY) 2 ---
+              await delay(12000);
+
+            } catch (imgError: any) {
+               if (imgError.message?.includes("429") || imgError.message?.includes("RESOURCE_EXHAUSTED") || imgError.message?.includes("Quota")) {
+                 addLog(`Cota excedida. Pausando 25s antes de tentar novamente (Tentativa ${retries+1}/2)...`);
+                 await delay(25000);
+                 retries++;
+               } else {
+                 console.warn("Skipping image due to non-quota error:", imgError);
+                 break; // Sai do loop de retry se não for erro de cota
+               }
+            }
+        }
       }
       
       // Pad with cover if needed
@@ -809,268 +839,106 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
   );
 };
 
-// --- MAIN APP ---
 const App: React.FC = () => {
-  const [muses, setMuses] = useState<MuseProfile[]>(INITIAL_MUSES);
   const [view, setView] = useState<ViewState>('HOME');
-  const [activeProfile, setActiveProfile] = useState<MuseProfile | null>(null);
-  const [loading, setLoading] = useState(true);
-  
-  // Search State
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filteredMuses, setFilteredMuses] = useState<MuseProfile[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
+  const [muses, setMuses] = useState<MuseProfile[]>(INITIAL_MUSES);
+  const [selectedProfile, setSelectedProfile] = useState<MuseProfile | null>(null);
 
-  // --- SPLIT DATABASE STRATEGY ---
-  // 1. Fetch `db_index.json` from root
-  // 2. Load cached local drafts from IndexedDB
-  // 3. Merge
   useEffect(() => {
-    const initData = async () => {
-      let combinedMuses: MuseProfile[] = [];
-      const remoteIdsSet = new Set<string>();
-
-      // Step 1: Load Remote Data (Static Site)
-      // Tries to find db_index.json which tells us what is published
-      try {
-        const indexRes = await fetch(`./${DB_INDEX_FILENAME}?t=${Date.now()}`);
-        if (indexRes.ok) {
-          const ids: string[] = await indexRes.json();
-          ids.forEach(id => remoteIdsSet.add(id));
-          
-          const promises = ids.map(id => 
-             fetch(`./${DB_FOLDER}/${id}.json`)
-                .then(r => r.ok ? r.json() : null)
-                .catch(err => null)
-          );
-          const results = await Promise.all(promises);
-          results.forEach((m) => {
-             if (m && m.id) {
-                m.isRemote = true; // Mark as published
-                combinedMuses.push(m);
-             }
-          });
-        }
-      } catch (e) { 
-        console.warn("Static DB load failed (offline or dev mode)."); 
-      }
-
-      // Step 2: Load Local DB (User drafts)
-      try {
-        const localItems = await dbAPI.getAll();
-        localItems.forEach(m => {
-          // Check if this local item is actually already published
-          if (remoteIdsSet.has(m.id)) {
-            // It exists in remote. 
-            // We usually prefer the local copy if we are editing, 
-            // OR we prefer remote if we want to show 'live' data.
-            // For this app, let's update the local flag to true.
-            m.isRemote = true;
-          } else {
-             m.isRemote = false; // It's a pure draft
-          }
-
-          // Merge logic: If it exists in combined (from remote fetch), replace it or ignore?
-          // Let's assume Local IndexedDB is the "Source of Truth" for the admin.
-          const existingIndex = combinedMuses.findIndex(r => r.id === m.id);
-          if (existingIndex !== -1) {
-             combinedMuses[existingIndex] = m; // Update with local data which might be newer
-          } else {
-             combinedMuses.unshift(m); // Add new draft
-          }
-        });
-      } catch (e) {
-        console.warn("IndexedDB load failed:", e);
-      }
-
-      setMuses(combinedMuses);
-      setFilteredMuses(combinedMuses);
-      setLoading(false);
+    const loadMuses = async () => {
+      const stored = await dbAPI.getAll();
+      setMuses(stored.sort((a, b) => Number(b.id) - Number(a.id)));
     };
-    
-    initData();
+    loadMuses();
   }, []);
 
-  // Filter Logic
-  useEffect(() => {
-    if (loading) return; 
-    setIsSearching(true);
-    const delayDebounceFn = setTimeout(() => {
-      if (!searchTerm.trim()) {
-        setFilteredMuses(muses);
-      } else {
-        const lower = searchTerm.toLowerCase();
-        const results = muses.filter(m => 
-          m.name.toLowerCase().includes(lower) || 
-          m.niche.toLowerCase().includes(lower) ||
-          m.tagline.toLowerCase().includes(lower)
-        );
-        setFilteredMuses(results);
-      }
-      setIsSearching(false);
-    }, 500); 
-
-    return () => clearTimeout(delayDebounceFn);
-  }, [searchTerm, muses, loading]);
-
-  const handleCreateMuse = async (newMuse: MuseProfile) => {
-    // 1. Save to Persistent DB
+  const handleGenerate = async (newMuse: MuseProfile) => {
     await dbAPI.save(newMuse);
-    // 2. Update UI
     setMuses(prev => [newMuse, ...prev]);
   };
 
-  const handleDeleteMuse = async (id: string) => {
-    // 1. Remove from Persistent DB
-    await dbAPI.delete(id);
-    // 2. Update UI
-    setMuses(prev => prev.filter(m => m.id !== id));
-  };
-  
-  const handleExportDB = () => {
-     const blob = new Blob([JSON.stringify(muses, null, 2)], { type: "application/json" });
-     const url = URL.createObjectURL(blob);
-     const a = document.createElement("a");
-     a.href = url; a.download = "full_backup.json"; 
-     a.click();
+  const handleDelete = async (id: string) => {
+    if (confirm("Tem certeza que deseja excluir este perfil?")) {
+      await dbAPI.delete(id);
+      setMuses(prev => prev.filter(m => m.id !== id));
+    }
   };
 
-  const handleImportDB = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      try {
-        const imported = JSON.parse(event.target?.result as string);
-        if (Array.isArray(imported)) {
-           // Save all to IDB
-           for (const m of imported) {
-             await dbAPI.save(m);
-           }
-           // Reload state
-           setMuses(prev => {
-             const existingIds = new Set(prev.map(m => m.id));
-             const newOnes = imported.filter((m: any) => !existingIds.has(m.id));
-             return [...newOnes, ...prev];
-           });
-           alert(`Importado com sucesso! ${imported.length} perfis carregados.`);
-        }
-      } catch (err) { alert("Erro ao importar arquivo."); }
-    };
-    reader.readAsText(file);
+  const handleSelectProfile = (profile: MuseProfile) => {
+    setSelectedProfile(profile);
+    setView('PROFILE');
   };
 
-  if (loading) return <div className="min-h-screen bg-[#050505] flex items-center justify-center"><Loader2 className="text-yellow-600 animate-spin" size={48} /></div>;
+  const handleBack = () => {
+    setSelectedProfile(null);
+    setView('HOME');
+  };
 
   return (
-    <div className="bg-[#050505] min-h-screen text-white font-sans selection:bg-yellow-600 selection:text-black">
-      <Navigation onNavigate={(v) => { setView(v); if(v==='HOME') setActiveProfile(null); }} currentView={view} />
-      
-      {view === 'HOME' && (
-        <>
-          <Hero />
-          <section id="profiles" className="py-32 px-6 bg-[#050505] relative">
-             <div className="container mx-auto max-w-7xl">
-                <div className="flex flex-col md:flex-row justify-between items-end mb-24 border-b border-white/10 pb-8 gap-6">
+    <div className="bg-black min-h-screen text-white font-sans selection:bg-yellow-600 selection:text-black">
+       <Navigation onNavigate={setView} currentView={view} />
+       
+       {view === 'HOME' && (
+         <>
+           <Hero />
+           <div id="profiles" className="bg-[#050505] py-24 px-6 md:px-12 border-t border-white/5">
+              <div className="container mx-auto">
+                 <div className="flex justify-between items-end mb-16">
                    <div>
-                     <h2 className="text-4xl md:text-6xl font-serif text-white mb-2">Nossos Talentos</h2>
-                     <div className="relative mt-4 group">
-                       <Search className="absolute left-0 top-1/2 -translate-y-1/2 text-gray-500 group-focus-within:text-yellow-600 transition-colors" size={20} />
-                       <input 
-                         type="text" 
-                         value={searchTerm}
-                         onChange={(e) => setSearchTerm(e.target.value)}
-                         placeholder="Buscar por nome ou nicho..." 
-                         className="bg-transparent border-none text-white pl-8 focus:ring-0 placeholder:text-gray-600 text-lg w-full md:w-[300px] outline-none"
-                       />
-                       <div className="absolute bottom-0 left-0 w-full h-[1px] bg-white/20 group-focus-within:bg-yellow-600 transition-colors"></div>
-                     </div>
+                     <span className="text-yellow-600 font-bold tracking-widest text-xs uppercase mb-2 block">Nosso Casting</span>
+                     <h2 className="font-serif text-4xl md:text-6xl text-white">Talentos em Destaque</h2>
                    </div>
-                   <div className="text-right hidden md:block"><p className="text-yellow-600 text-lg font-bold">{muses.length}</p><p className="text-gray-500 text-xs uppercase tracking-widest">Modelos Exclusivas</p></div>
-                </div>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-12 gap-y-24">
-                   <div onClick={() => setView('DASHBOARD')} className="group cursor-pointer min-h-[500px] flex flex-col items-center justify-center border border-dashed border-white/20 hover:border-yellow-600 transition-colors rounded-sm bg-gray-900/20">
-                      <PlusCircle size={48} className="text-gray-600 group-hover:text-yellow-600 mb-4 transition-colors" />
-                      <span className="text-gray-500 font-bold uppercase tracking-widest text-sm group-hover:text-white">Adicionar Novo Talento</span>
+                   <div className="hidden md:block w-1/3 h-[1px] bg-white/10"></div>
+                 </div>
+                 
+                 {muses.length === 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                       <MuseSkeleton /><MuseSkeleton /><MuseSkeleton />
+                    </div>
+                 ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-x-8 gap-y-16">
+                       {muses.map(muse => (
+                         <div key={muse.id} onClick={() => handleSelectProfile(muse)} className="group cursor-pointer">
+                            <div className="aspect-[3/4] overflow-hidden relative mb-6 border border-white/10 shadow-lg">
+                               <OptimizedImage src={muse.coverImage} className="w-full h-full object-cover transition-transform duration-1000 group-hover:scale-110" alt={muse.name} />
+                               <div className="absolute inset-0 bg-black/20 group-hover:bg-transparent transition-all duration-500"></div>
+                               <div className="absolute top-4 left-4 bg-white/10 backdrop-blur-md border border-white/20 text-white px-3 py-1 text-[10px] font-bold uppercase tracking-widest">{muse.niche}</div>
+                            </div>
+                            <h3 className="font-serif text-3xl text-white mb-2 group-hover:text-yellow-600 transition-colors">{muse.name}</h3>
+                            <p className="text-gray-400 text-sm font-light tracking-wide line-clamp-2">{muse.tagline}</p>
+                         </div>
+                       ))}
+                    </div>
+                 )}
+              </div>
+           </div>
+           
+           <div id="niches" className="py-24 bg-black border-t border-white/5">
+               <div className="container mx-auto px-6 text-center">
+                   <h2 className="font-serif text-4xl text-white mb-12">Áreas de Atuação</h2>
+                   <div className="flex flex-wrap justify-center gap-4">
+                       {Array.from(new Set(muses.map(m => m.niche))).map(niche => (
+                           <span key={niche} className="px-6 py-3 border border-white/20 rounded-full text-gray-300 hover:border-yellow-600 hover:text-yellow-600 transition-all cursor-default uppercase text-xs tracking-widest">{niche}</span>
+                       ))}
                    </div>
-                   
-                   {isSearching ? (
-                     Array.from({ length: 3 }).map((_, i) => (
-                       <MuseSkeleton key={i} />
-                     ))
-                   ) : (
-                     filteredMuses.map((muse) => (
-                        <div key={muse.id} onClick={() => { setActiveProfile(muse); setView('PROFILE'); }} className="group cursor-pointer">
-                           <div className="relative aspect-[3/4] mb-8 overflow-hidden">
-                              <OptimizedImage src={muse.coverImage} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105 filter grayscale group-hover:grayscale-0" alt={muse.name} />
-                              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-60 group-hover:opacity-40 transition-opacity"></div>
-                              <div className="absolute bottom-6 left-6"><span className="bg-white text-black text-[10px] font-bold px-2 py-1 uppercase tracking-widest mb-2 inline-block">{muse.niche}</span></div>
-                           </div>
-                           <h3 className="text-3xl font-serif text-white mb-2 group-hover:text-yellow-600 transition-colors">{muse.name}</h3>
-                           <p className="text-gray-500 text-sm line-clamp-2 leading-relaxed">{muse.tagline}</p>
-                        </div>
-                     ))
-                   )}
-                   
-                   {!isSearching && filteredMuses.length === 0 && (
-                     <div className="col-span-1 md:col-span-2 text-center py-20">
-                       <p className="text-gray-500 font-serif italic text-xl">Nenhum talento encontrado.</p>
-                     </div>
-                   )}
-                </div>
-             </div>
-          </section>
-        </>
-      )}
-
-      {view === 'PROFILE' && activeProfile && (
-        <ProfilePage 
-          profile={activeProfile} 
-          allMuses={muses}
-          onSelectProfile={(p) => { setActiveProfile(p); window.scrollTo(0,0); }}
-          onBack={() => setView('HOME')} 
-        />
-      )}
-
-      {view === 'DASHBOARD' && (
-        <Dashboard 
-          onGenerate={handleCreateMuse} 
-          onDelete={handleDeleteMuse}
-          onExport={handleExportDB}
-          onImport={handleImportDB}
-          muses={muses}
-        />
-      )}
-
-      <footer id="contact" className="bg-black py-24 border-t border-white/10 text-center md:text-left">
-        <div className="container mx-auto px-6 max-w-7xl grid grid-cols-1 md:grid-cols-4 gap-12">
-           <div className="col-span-1 md:col-span-2">
-              <h2 className="text-3xl font-serif font-black text-white tracking-widest mb-6">LUMIÈRE<span className="text-yellow-600">.</span></h2>
-              <p className="text-gray-500 max-w-sm mb-8 leading-relaxed">Redefinindo a intersecção entre influência digital de elite e inteligência de mercado. Uma curadoria de excelência para marcas que exigem o extraordinário.</p>
-              <div className="flex gap-6 justify-center md:justify-start"><Instagram className="text-gray-400 hover:text-white cursor-pointer" /><Mail className="text-gray-400 hover:text-white cursor-pointer" /></div>
+               </div>
            </div>
-           <div>
-              <h4 className="text-white font-bold uppercase tracking-widest mb-6 text-sm">Agência</h4>
-              <ul className="space-y-4 text-gray-500 text-sm">
-                 <li className="hover:text-yellow-600 cursor-pointer">Sobre Nós</li>
-                 <li className="hover:text-yellow-600 cursor-pointer">Carreiras</li>
-                 <li className="hover:text-yellow-600 cursor-pointer">Imprensa</li>
-              </ul>
-           </div>
-           <div>
-              <h4 className="text-white font-bold uppercase tracking-widest mb-6 text-sm">Legal</h4>
-              <ul className="space-y-4 text-gray-500 text-sm">
-                 <li className="hover:text-yellow-600 cursor-pointer">Privacidade</li>
-                 <li className="hover:text-yellow-600 cursor-pointer">Termos de Uso</li>
-                 <li className="hover:text-yellow-600 cursor-pointer">Compliance</li>
-              </ul>
-           </div>
-        </div>
-        <div className="container mx-auto px-6 max-w-7xl mt-20 pt-8 border-t border-white/5 text-center text-gray-600 text-xs">
-           &copy; 2024 Lumière Collective. Todos os direitos reservados.
-        </div>
-      </footer>
+         </>
+       )}
+
+       {view === 'PROFILE' && selectedProfile && (
+         <ProfilePage profile={selectedProfile} allMuses={muses} onSelectProfile={handleSelectProfile} onBack={handleBack} />
+       )}
+
+       {view === 'DASHBOARD' && (
+         <Dashboard 
+            onGenerate={handleGenerate} 
+            onDelete={handleDelete} 
+            muses={muses} 
+            onExport={() => {}} 
+            onImport={(e) => {}} 
+         />
+       )}
     </div>
   );
 };
