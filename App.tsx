@@ -51,6 +51,19 @@ const GITHUB_CONFIG_KEY = 'LUMIERE_GITHUB_CONFIG'; // GitHub Credentials
 const DB_INDEX_FILENAME = 'db_index.json'; // The "Map" of the database
 const DB_FOLDER = 'database'; // The folder where individual JSONs live
 
+// --- HELPER: API Key Handler ---
+// Tries to get VITE_API_KEY (Netlify/Vite standard) first, then falls back to process.env
+const getApiKey = () => {
+  try {
+    // @ts-ignore
+    if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_KEY) {
+      // @ts-ignore
+      return import.meta.env.VITE_API_KEY;
+    }
+  } catch (e) {}
+  return process.env.API_KEY || '';
+};
+
 // --- HELPER: Safe Storage ---
 const saveToLocalStorage = (key: string, data: any) => {
   try {
@@ -544,7 +557,7 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => void; onDelete: (
     const physicalPrompt = `Extremely beautiful Woman of ${randomEthnicity} descent, featuring ${randomHair} and ${randomFeature}. Luxury high-fashion model look, fit physique, hourglass figure, drop-dead gorgeous, elegant posture.`;
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+      const ai = new GoogleGenAI({ apiKey: getApiKey() });
       // UPDATED PROMPT: Avoid "Femme Fatale" to reduce refusals, emphasize variety
       const prompt = `Generate a JSON profile for a High-End Luxury Consultant or Model. 
       The Name must be culturally appropriate for: ${randomEthnicity}.
@@ -576,7 +589,7 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => void; onDelete: (
     setLoading(true); setLogs([]); addLog("Iniciando processo de criação High-Ticket...");
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+      const ai = new GoogleGenAI({ apiKey: getApiKey() });
       addLog("Escrevendo artigo de 6 parágrafos + FAQ...");
       
       // UPDATED PROMPT: High Density Content, Less Markdown
