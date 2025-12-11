@@ -36,7 +36,9 @@ import {
   Database,
   CloudUpload,
   Settings,
-  AlertCircle
+  AlertCircle,
+  Globe2,
+  HardDrive
 } from 'lucide-react';
 import { MuseProfile, ViewState, DashboardInputs } from './types';
 
@@ -46,13 +48,11 @@ const ADSENSE_PUB_ID = "ca-pub-0000000000000000";
 
 // --- INITIAL DATA & STORAGE ---
 const INITIAL_MUSES: MuseProfile[] = [];
-const STORAGE_KEY = 'LUMIERE_MUSES_DB_V4'; // Local drafts
 const GITHUB_CONFIG_KEY = 'LUMIERE_GITHUB_CONFIG'; // GitHub Credentials
 const DB_INDEX_FILENAME = 'db_index.json'; // The "Map" of the database
 const DB_FOLDER = 'database'; // The folder where individual JSONs live
 
 // --- HELPER: API Key Handler ---
-// Tries to get VITE_API_KEY (Netlify/Vite standard) first, then falls back to process.env
 const getApiKey = () => {
   try {
     // @ts-ignore
@@ -64,7 +64,7 @@ const getApiKey = () => {
   return process.env.API_KEY || '';
 };
 
-// --- HELPER: Safe Storage ---
+// --- HELPER: Safe Storage (For lightweight config only) ---
 const saveToLocalStorage = (key: string, data: any) => {
   try {
     localStorage.setItem(key, JSON.stringify(data));
@@ -73,12 +73,70 @@ const saveToLocalStorage = (key: string, data: any) => {
   }
 };
 
+// --- INDEXED DB STORAGE (Fix for QuotaExceededError) ---
+// IndexedDB allows storing large amounts of data (Blobs/Base64) without the 5MB limit of LocalStorage.
+const IDB_CONFIG = { name: 'LUMIERE_DB', version: 1, store: 'muses' };
+
+const openDB = (): Promise<IDBDatabase> => {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(IDB_CONFIG.name, IDB_CONFIG.version);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+    request.onupgradeneeded = (event) => {
+      const db = (event.target as IDBOpenDBRequest).result;
+      if (!db.objectStoreNames.contains(IDB_CONFIG.store)) {
+        db.createObjectStore(IDB_CONFIG.store, { keyPath: 'id' });
+      }
+    };
+  });
+};
+
+const dbAPI = {
+  save: async (muse: MuseProfile) => {
+    try {
+      const db = await openDB();
+      return new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(IDB_CONFIG.store, 'readwrite');
+        const store = tx.objectStore(IDB_CONFIG.store);
+        const request = store.put(muse);
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+      });
+    } catch (e) { console.error("IDB Save Error", e); throw e; }
+  },
+  getAll: async (): Promise<MuseProfile[]> => {
+    try {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(IDB_CONFIG.store, 'readonly');
+        const store = tx.objectStore(IDB_CONFIG.store);
+        const request = store.getAll();
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+    } catch (e) { 
+      console.warn("IDB Load Error or Empty", e); 
+      return []; 
+    }
+  },
+  delete: async (id: string) => {
+    try {
+      const db = await openDB();
+      return new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(IDB_CONFIG.store, 'readwrite');
+        const store = tx.objectStore(IDB_CONFIG.store);
+        const request = store.delete(id);
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+      });
+    } catch (e) { console.error("IDB Delete Error", e); }
+  }
+};
+
 // --- HELPER: Clean JSON Parsing ---
 const cleanAndParseJSON = (text: string) => {
   try {
-    // Remove markdown code blocks if present
     let clean = text.replace(/```json/g, '').replace(/```/g, '');
-    // Remove formatting asterisks just in case
     clean = clean.replace(/\*\*/g, ''); 
     return JSON.parse(clean);
   } catch (e) {
@@ -87,7 +145,7 @@ const cleanAndParseJSON = (text: string) => {
   }
 };
 
-// --- OPTIMIZED IMAGE COMPONENT (Mobile Performance) ---
+// --- OPTIMIZED IMAGE COMPONENT ---
 const OptimizedImage: React.FC<{ 
   src: string; 
   alt: string; 
@@ -99,14 +157,10 @@ const OptimizedImage: React.FC<{
       src={src}
       alt={alt}
       className={className}
-      // "eager" loads immediately (for Hero), "lazy" waits for scroll (for content)
       loading={priority ? "eager" : "lazy"}
-      // "async" decoding prevents UI freeze on mobile during heavy image processing
       decoding="async"
-      // Prioritize the Hero image for LCP (Largest Contentful Paint)
-      // @ts-ignore - React HTML attributes type definition might miss fetchPriority in some versions
+      // @ts-ignore
       fetchPriority={priority ? "high" : "auto"}
-      // Helps browser allocate layout space
       sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
     />
   );
@@ -129,17 +183,14 @@ const MuseSkeleton = () => (
   </div>
 );
 
-// --- SMART AD UNIT (ADSENSE IMPLEMENTATION) ---
+// --- SMART AD UNIT ---
 const SmartAdUnit: React.FC<{ slotId: string; format: 'auto' | 'fluid' | 'rectangle'; className?: string }> = ({ slotId, format, className }) => {
   const adRef = useRef<HTMLDivElement>(null);
-
   useEffect(() => {
     try {
         // @ts-ignore
         (window.adsbygoogle = window.adsbygoogle || []).push({});
-    } catch (e) {
-        // console.error("AdSense push error", e); // Suppress errors in dev
-    }
+    } catch (e) {}
   }, [slotId]);
 
   return (
@@ -242,7 +293,6 @@ const Hero: React.FC = () => {
         <div className="absolute inset-0 bg-gradient-to-t from-[#050505] via-[#050505]/40 to-transparent"></div>
         <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-10"></div>
       </div>
-      {/* GLASS CEILING FIX: max-h-[55vh] bottom-0 */}
       <div className="absolute left-0 right-0 bottom-0 flex flex-col items-center justify-end pb-20 md:pb-32 max-h-[55vh] pointer-events-none">
         <div className="relative z-10 text-center px-6 max-w-6xl mx-auto pointer-events-auto">
           <h1 className="font-serif text-5xl md:text-7xl lg:text-8xl text-white mb-10 leading-none tracking-tight drop-shadow-2xl">THE MUSE <br/> <span className="italic text-transparent bg-clip-text bg-gradient-to-r from-yellow-200 via-yellow-500 to-yellow-700">COLLECTIVE</span></h1>
@@ -257,26 +307,19 @@ const Hero: React.FC = () => {
 // --- PROFILE PAGE ---
 const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onSelectProfile: (p: MuseProfile) => void; onBack: () => void }> = ({ profile, allMuses, onSelectProfile, onBack }) => {
   
-  // SEO Optimization: Update Title and Meta Description
   useEffect(() => { 
     window.scrollTo(0, 0); 
-    
-    // Update Title
     document.title = `${profile.content.title} | Lumière Collective`;
-    
-    // Update Meta Description
     let metaDescription = document.querySelector("meta[name='description']");
     if (!metaDescription) {
       metaDescription = document.createElement('meta');
       metaDescription.setAttribute('name', 'description');
       document.head.appendChild(metaDescription);
     }
-    // Truncate intro for meta description standard (approx 160 chars)
     const truncatedIntro = profile.content.intro.length > 160 ? profile.content.intro.substring(0, 157) + '...' : profile.content.intro;
     metaDescription.setAttribute('content', truncatedIntro);
 
     return () => {
-      // Cleanup/Reset on unmount if needed, or set to default
       document.title = "LUMIÈRE - Exclusive Muse Collective";
     }
   }, [profile]);
@@ -292,12 +335,9 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
       </div>
 
       <div className="relative h-[95vh] w-full overflow-hidden">
-        {/* Optimized Hero Image (Priority Load) */}
         <OptimizedImage src={profile.coverImage} className="w-full h-full object-cover object-center" alt={profile.name} priority={true} />
-        
         <div className="absolute inset-0 bg-gradient-to-t from-[#050505] via-black/40 to-black/30"></div>
         <div className="absolute inset-0 bg-gradient-to-t from-[#050505] via-[#050505]/90 to-transparent opacity-100"></div>
-        {/* GLASS CEILING FIX: max-h-[55vh] bottom-0 */}
         <div className="absolute left-0 right-0 bottom-0 z-20 flex flex-col justify-end px-6 md:px-12 pb-20 md:pb-32 pointer-events-none max-h-[55vh]">
           <div className="container mx-auto max-w-7xl pointer-events-auto flex flex-col items-center md:items-start text-center md:text-left">
             <div className="flex flex-wrap justify-center md:justify-start items-center gap-4 mb-6 md:mb-8 animate-fade-in-up">
@@ -314,18 +354,12 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
         <div className="container mx-auto max-w-5xl">
           <div className="flex flex-col gap-12">
             
-            {/* CONTENT START */}
             <div className="prose prose-invert prose-lg max-w-none">
               <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 first-letter:text-7xl first-letter:font-serif first-letter:text-yellow-600 first-letter:float-left first-letter:mr-4 first-letter:mt-[-8px] mb-12 font-light tracking-wide">{profile.content.bodyParagraphs[0]}</p>
-              
-              {/* AD SLOT 1: Top (Display Horizontal) */}
               <SmartAdUnit slotId="1624191321" format="auto" className="w-full max-w-4xl mx-auto" />
-
-              {/* Body Image 1 (Lazy) */}
               <div className="my-16 relative group overflow-hidden shadow-2xl border border-white/5">
                 <OptimizedImage src={profile.images[0]} className="w-full h-[400px] md:h-[800px] object-cover transition-transform duration-1000 group-hover:scale-105" alt="Editorial 1" />
               </div>
-
               <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-12 tracking-wide font-light">{profile.content.bodyParagraphs[1]}</p>
               <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-16 tracking-wide font-light">{profile.content.bodyParagraphs[2]}</p>
               
@@ -337,10 +371,8 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
                  <div className="mt-8 flex gap-3 flex-wrap">{profile.content.keywords.slice(0,3).map(kw => (<span key={kw} className="text-xs bg-yellow-600/10 text-yellow-500 px-3 py-1 rounded border border-yellow-600/20">{kw}</span>))}</div>
               </div>
 
-              {/* AD SLOT 2: Mid (Native In-Article) */}
               <SmartAdUnit slotId="6844728415" format="fluid" className="w-full" />
 
-              {/* Grid Images (Lazy) */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8 my-20">
                  <div className="h-[400px] md:h-[500px] md:mt-12 shadow-lg border border-white/5">
                     <OptimizedImage src={profile.images[1]} className="w-full h-full object-cover grayscale hover:grayscale-0 transition-all duration-1000" alt="Detail 1" />
@@ -353,7 +385,6 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
               <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-12 tracking-wide font-light">{profile.content.bodyParagraphs[3]}</p>
               <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-12 tracking-wide font-light">{profile.content.bodyParagraphs[4]}</p>
               
-              {/* AD SLOT 3: Bottom (Rectangle) */}
               <SmartAdUnit slotId="1006896613" format="auto" className="w-full max-w-[336px] mx-auto" />
 
               <div className="my-24 border-l-4 border-white pl-8 md:pl-12 py-4">
@@ -424,19 +455,17 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
 };
 
 // --- DASHBOARD ---
-const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => void; onDelete: (id: string) => void; onExport: () => void; onImport: (e: React.ChangeEvent<HTMLInputElement>) => void; muses: MuseProfile[]; }> = ({ onGenerate, onDelete, onExport, onImport, muses }) => {
+const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; onDelete: (id: string) => Promise<void>; onExport: () => void; onImport: (e: React.ChangeEvent<HTMLInputElement>) => void; muses: MuseProfile[]; }> = ({ onGenerate, onDelete, onExport, onImport, muses }) => {
   const [inputs, setInputs] = useState<DashboardInputs>({ niche: '', name: '', details: '' });
   const [loading, setLoading] = useState(false);
   const [publishing, setPublishing] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   
-  // GitHub Config State
   const [ghConfig, setGhConfig] = useState<{owner: string, repo: string, token: string, branch: string}>({
     owner: '', repo: '', token: '', branch: 'main'
   });
   const [showConfig, setShowConfig] = useState(false);
 
-  // Load Config on Mount
   useEffect(() => {
     const saved = localStorage.getItem(GITHUB_CONFIG_KEY);
     if (saved) setGhConfig(JSON.parse(saved));
@@ -468,13 +497,11 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => void; onDelete: (
        };
        const baseUrl = `https://api.github.com/repos/${ghConfig.owner}/${ghConfig.repo}/contents`;
 
-       // 1. Upload Model JSON
-       const modelContent = btoa(unescape(encodeURIComponent(JSON.stringify(muse, null, 2)))); // Handle unicode
+       const modelContent = btoa(unescape(encodeURIComponent(JSON.stringify(muse, null, 2))));
        const modelPath = `${DB_FOLDER}/${muse.id}.json`;
        
        addLog(`Enviando arquivo: ${modelPath}...`);
        
-       // Check if file exists (to get SHA for update, though usually new)
        let sha = undefined;
        try {
           const checkRes = await fetch(`${baseUrl}/${modelPath}`, { headers });
@@ -497,7 +524,6 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => void; onDelete: (
 
        if (!modelRes.ok) throw new Error(`Erro ao subir modelo: ${modelRes.status}`);
 
-       // 2. Update Index
        addLog("Atualizando índice (db_index.json)...");
        const indexRes = await fetch(`${baseUrl}/${DB_INDEX_FILENAME}`, { headers });
        let indexSha = undefined;
@@ -506,14 +532,12 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => void; onDelete: (
        if (indexRes.ok) {
           const indexData = await indexRes.json();
           indexSha = indexData.sha;
-          // Decode Base64 content from GitHub
           try {
              const decodedContent = decodeURIComponent(escape(atob(indexData.content)));
              currentIndex = JSON.parse(decodedContent);
           } catch (e) { console.error("Index parse error", e); }
        }
 
-       // Add new ID if not exists
        if (!currentIndex.includes(muse.id)) {
           currentIndex.push(muse.id);
        }
@@ -533,8 +557,14 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => void; onDelete: (
 
        if (!updateIndexRes.ok) throw new Error("Erro ao atualizar índice.");
 
-       addLog("SUCESSO! Publicado no GitHub. O site deve atualizar em 2-3 minutos.");
-       alert(`Sucesso! ${muse.name} foi publicada no GitHub. Aguarde o deploy.`);
+       // Atualiza estado local para refletir que foi publicado
+       await dbAPI.save({...muse, isRemote: true});
+       
+       // Força reload da página ou do estado para atualizar badge
+       window.location.reload(); 
+
+       addLog("SUCESSO! Publicado no GitHub.");
+       alert(`Sucesso! ${muse.name} foi publicada no GitHub.`);
 
     } catch (err: any) {
        console.error(err);
@@ -548,39 +578,29 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => void; onDelete: (
   const generateRandomPersona = async () => {
     setLoading(true);
     addLog("Ativando Gerador Genético de Diversidade...");
-    const ethnicities = ["Scandinavian (pale skin, high cheekbones)", "Afro-Caribbean (dark skin, full lips)", "Japanese (porcelain skin, sleek hair)", "Brazilian Mixed (olive skin, curly hair)", "Indian (golden skin, sharp features)", "Mediterranean (tan skin, dark eyes)", "Eastern European (fair skin, light eyes)", "Middle Eastern (olive skin, expressive eyes)"];
-    const hairStyles = ["Platinum Blonde Bob cut", "Long Jet Black waves waist length", "Redhead copper hair loose curls", "Honey Brown highlights straight hair", "Silver/Grey fashion hair sleek", "Natural Afro hair", "Braided hair elaborate style", "Pink-tinted balayage hair"];
-    const distinctFeatures = ["freckles on nose", "distinct mole on cheek", "heterochromia eyes", "gap between front teeth", "very sharp jawline", "dimples when smiling", "bushy natural eyebrows", "piercing blue eyes"];
+    const ethnicities = ["Scandinavian", "Afro-Caribbean", "Japanese", "Brazilian Mixed", "Indian", "Mediterranean", "Eastern European", "Middle Eastern"];
+    const hairStyles = ["Platinum Blonde Bob", "Long Jet Black waves", "Redhead copper curls", "Honey Brown straight", "Silver/Grey sleek", "Natural Afro", "Braided elaborate", "Pink-tinted balayage"];
+    const distinctFeatures = ["freckles", "distinct mole", "heterochromia eyes", "sharp jawline", "dimples", "bushy eyebrows", "piercing blue eyes"];
     const randomEthnicity = ethnicities[Math.floor(Math.random() * ethnicities.length)];
     const randomHair = hairStyles[Math.floor(Math.random() * hairStyles.length)];
     const randomFeature = distinctFeatures[Math.floor(Math.random() * distinctFeatures.length)];
-    const physicalPrompt = `Extremely beautiful Woman of ${randomEthnicity} descent, featuring ${randomHair} and ${randomFeature}. Luxury high-fashion model look, fit physique, hourglass figure, drop-dead gorgeous, elegant posture.`;
+    const physicalPrompt = `Beautiful Woman of ${randomEthnicity} descent, featuring ${randomHair} and ${randomFeature}. Luxury high-fashion model look, fit physique, elegant posture.`;
 
     try {
       const ai = new GoogleGenAI({ apiKey: getApiKey() });
-      // UPDATED PROMPT: Avoid "Femme Fatale" to reduce refusals, emphasize variety
       const prompt = `Generate a JSON profile for a High-End Luxury Consultant or Model. 
       The Name must be culturally appropriate for: ${randomEthnicity}.
-      The Niche must be a High CPM topic (e.g., Mesothelioma, Insurance, Mortgage, Crypto, Luxury Real Estate, Tech Law). 
-      DO NOT USE "Finance" every time. Vary the niche!
-      
+      The Niche must be a High CPM topic.
       Output JSON ONLY: {"name": "Elegant Name", "niche": "High Ticket Niche", "details": "${physicalPrompt}"}`;
       
       const result = await ai.models.generateContent({ model: "gemini-2.5-flash", contents: prompt, config: { responseMimeType: "application/json" } });
       const data = cleanAndParseJSON(result.text || "{}");
       setInputs({ name: data.name, niche: data.niche, details: physicalPrompt });
-      addLog(`DNA: ${randomEthnicity} + ${randomHair}`);
       addLog(`Persona: ${data.name} - ${data.niche}`);
     } catch (error) { 
       console.error(error); 
-      // RANDOM FALLBACKS (No more fixed Sofia/Finance)
-      const fallbackNames = ["Isabella", "Valentina", "Genevieve", "Anastasia", "Dominique", "Zara", "Yasmin"];
-      const fallbackNiches = ["Forex Trading", "Luxury Real Estate", "Cybersecurity", "Maritime Law", "Cloud Computing", "Biotech Investment"];
-      const rName = fallbackNames[Math.floor(Math.random() * fallbackNames.length)];
-      const rNiche = fallbackNiches[Math.floor(Math.random() * fallbackNiches.length)];
-      
-      addLog("IA ocupada, usando dados aleatórios locais."); 
-      setInputs({ name: rName, niche: rNiche, details: physicalPrompt }); 
+      setInputs({ name: "Sofia", niche: "Luxury", details: physicalPrompt }); 
+      addLog("IA ocupada, usando dados padrão.");
     } finally { setLoading(false); }
   };
 
@@ -592,17 +612,9 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => void; onDelete: (
       const ai = new GoogleGenAI({ apiKey: getApiKey() });
       addLog("Escrevendo artigo de 6 parágrafos + FAQ...");
       
-      // UPDATED PROMPT: High Density Content, Less Markdown
-      const textPrompt = `You are the Editor-in-Chief of a high-end luxury lifestyle & business magazine (like Monocle meets Vogue).
+      const textPrompt = `You are the Editor-in-Chief of a high-end luxury lifestyle & business magazine.
       Create a JSON profile for "${inputs.name}", an elite consultant in "${inputs.niche}".
       Language: PT-BR (Portuguese).
-      
-      TONE: Sophisticated, intellectual, authoritative yet slightly provocative. She is an expert.
-      CONTENT:
-      - Deep technical insight about ${inputs.niche} (High CPM keywords).
-      - Mixed with a luxurious lifestyle narrative (travels, art, wine).
-      - 6 dense paragraphs.
-      
       FORMAT: PLAIN JSON ONLY. NO Markdown.
       Schema:
       {
@@ -627,7 +639,6 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => void; onDelete: (
       const content = cleanAndParseJSON(textResult.text || "{}");
 
       addLog("Fotografando capa (Lumière Aesthetic)...");
-      // UPDATED PROMPT: Cinematic, Grainy, Flash, Editorial
       const basePrompt = `Portrait of a woman (${inputs.details}). 
       Style: High-fashion editorial, shot on Kodak Portra 400, 35mm film grain, flash photography, direct flash, high contrast, glamorous, chic, cinematic lighting. 
       Vibe: 'Old Money' meets 'Femme Fatale', elegant but provocative (Safe for Work).
@@ -639,22 +650,22 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => void; onDelete: (
       if (!coverBase64) throw new Error("Falha na capa");
       const coverImage = `data:image/png;base64,${coverBase64}`;
 
-      addLog("Produzindo editorial variado (7 fotos)...");
+      addLog("Produzindo editorial variado (5 fotos)...");
       const galleryImages = [coverImage];
       const allScenarios = [
-          "Sitting in a dark mahogany office, wearing a silk blouse, holding a fountain pen, looking intensely at camera, cinematic lighting",
-          "Backseat of a Rolls Royce at night, wearing a fur coat (faux), city lights reflecting on window, flash photography",
-          "Walking down a marble staircase in an evening gown, looking back, paparazzi style flash, motion blur",
-          "Lounging on a velvet sofa in a penthouse, wearing a slip dress, holding a glass of whiskey, moody lighting",
-          "Close up portrait applying red lipstick in a mirror, backstage vibe, grainy film look",
-          "Standing on a windy balcony overlooking the ocean, wearing a white linen suit, golden hour sun flare",
-          "Dining at a Michelin star restaurant, candlelight, wearing diamonds, laughing, candid shot",
-          "Getting out of a private jet, wearing sunglasses and a scarf, confident posture, sunny day"
+          "Sitting in a dark mahogany office, wearing a silk blouse",
+          "Backseat of a Rolls Royce at night, wearing a fur coat (faux)",
+          "Walking down a marble staircase in an evening gown, motion blur",
+          "Lounging on a velvet sofa in a penthouse, slip dress",
+          "Close up portrait applying red lipstick, backstage vibe",
+          "Standing on a windy balcony overlooking the ocean, linen suit",
+          "Dining at a Michelin star restaurant, candlelight",
+          "Getting out of a private jet, sunglasses"
       ];
-      const selectedScenarios = allScenarios.sort(() => 0.5 - Math.random()).slice(0, 7);
+      const selectedScenarios = allScenarios.sort(() => 0.5 - Math.random()).slice(0, 5);
 
       for (const scenario of selectedScenarios) {
-        addLog(`Capturando: ${scenario.substring(0, 30)}...`);
+        addLog(`Capturando: ${scenario}...`);
         const galleryPrompt = `Photo of the SAME woman (${inputs.details}). 
         Scene: ${scenario}. 
         Style: High-fashion editorial, shot on Kodak Portra 400, 35mm film grain, flash photography. 
@@ -664,6 +675,9 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => void; onDelete: (
         const imgBase64 = extractImage(res);
         if (imgBase64) galleryImages.push(`data:image/png;base64,${imgBase64}`);
       }
+      
+      // Pad with cover if needed
+      while(galleryImages.length < 8) galleryImages.push(coverImage);
 
       const newMuse: MuseProfile = {
         id: Date.now().toString(),
@@ -673,11 +687,12 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => void; onDelete: (
         coverImage: coverImage,
         images: galleryImages,
         physicalDescription: inputs.details,
-        content: { title: content.title, intro: content.intro, bodyParagraphs: content.bodyParagraphs, keywords: content.keywords, expertVerdict: content.expertVerdict, faqs: content.faqs, insiderSecret: content.insiderSecret }
+        content: { title: content.title, intro: content.intro, bodyParagraphs: content.bodyParagraphs, keywords: content.keywords, expertVerdict: content.expertVerdict, faqs: content.faqs, insiderSecret: content.insiderSecret },
+        isRemote: false
       };
 
-      onGenerate(newMuse);
-      addLog("SUCESSO! Perfil High-Ticket criado.");
+      await onGenerate(newMuse);
+      addLog("SUCESSO! Perfil High-Ticket criado e salvo no Banco de Dados.");
       setInputs({ niche: '', name: '', details: '' });
     } catch (err) { console.error(err); addLog(`ERRO FATAL: ${(err as Error).message}`); } finally { setLoading(false); }
   };
@@ -754,9 +769,19 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => void; onDelete: (
           {muses.map(muse => (
              <div key={muse.id} className="flex items-center justify-between bg-gray-900 p-4 rounded border border-white/5 hover:border-yellow-600/50 transition-colors group">
                 <div className="flex items-center gap-4">
-                  <img src={muse.coverImage} className="w-12 h-12 rounded-full object-cover border border-white/10" />
+                  <div className="relative">
+                     <img src={muse.coverImage} className="w-12 h-12 rounded-full object-cover border border-white/10" />
+                     {muse.isRemote && <div className="absolute -bottom-1 -right-1 bg-green-500 rounded-full p-[2px] border-2 border-black"><CheckCircle size={10} className="text-black" fill="currentColor" /></div>}
+                  </div>
                   <div>
-                    <h4 className="text-white font-bold">{muse.name}</h4>
+                    <h4 className="text-white font-bold flex items-center gap-2">
+                       {muse.name}
+                       {muse.isRemote ? (
+                          <span className="text-[10px] bg-green-900/50 text-green-400 px-2 py-[2px] rounded border border-green-800 uppercase tracking-widest flex items-center gap-1"><Globe2 size={10} /> Publicado</span>
+                       ) : (
+                          <span className="text-[10px] bg-gray-800 text-gray-400 px-2 py-[2px] rounded border border-gray-700 uppercase tracking-widest flex items-center gap-1"><HardDrive size={10} /> Rascunho</span>
+                       )}
+                    </h4>
                     <p className="text-xs text-gray-500">{muse.niche} <span className="text-gray-700 mx-2">|</span> ID: {muse.id}</p>
                   </div>
                 </div>
@@ -766,10 +791,10 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => void; onDelete: (
                       <button 
                         onClick={() => publishToGitHub(muse)} 
                         disabled={publishing === muse.id}
-                        className={`flex items-center gap-2 px-3 py-2 border transition-colors text-xs font-bold uppercase tracking-wide rounded ${publishing === muse.id ? 'bg-yellow-600 border-yellow-600 text-black' : 'bg-green-900/30 border-green-600 text-green-500 hover:bg-green-600 hover:text-white'}`}
+                        className={`flex items-center gap-2 px-3 py-2 border transition-colors text-xs font-bold uppercase tracking-wide rounded ${publishing === muse.id ? 'bg-yellow-600 border-yellow-600 text-black' : (muse.isRemote ? 'bg-gray-800 border-gray-600 text-gray-400 hover:bg-gray-700' : 'bg-green-900/30 border-green-600 text-green-500 hover:bg-green-600 hover:text-white')}`}
                       >
                         {publishing === muse.id ? <Loader2 className="animate-spin" size={14}/> : <CloudUpload size={14} />} 
-                        {publishing === muse.id ? 'Enviando...' : 'Publicar'}
+                        {publishing === muse.id ? 'Enviando...' : (muse.isRemote ? 'Re-publicar' : 'Publicar')}
                       </button>
                    ) : (
                       <button onClick={() => handleDownloadSingle(muse)} className="flex items-center gap-2 px-3 py-2 bg-black border border-white/20 text-white hover:text-yellow-500 hover:border-yellow-500 transition-colors text-xs font-bold uppercase tracking-wide rounded"><FileJson size={14} /> JSON</button>
@@ -798,69 +823,66 @@ const App: React.FC = () => {
 
   // --- SPLIT DATABASE STRATEGY ---
   // 1. Fetch `db_index.json` from root
-  // 2. Iterate list and fetch `database/{id}.json` in parallel
-  // 3. Merge with local storage
+  // 2. Load cached local drafts from IndexedDB
+  // 3. Merge
   useEffect(() => {
     const initData = async () => {
       let combinedMuses: MuseProfile[] = [];
-      const seenIds = new Set<string>();
+      const remoteIdsSet = new Set<string>();
 
+      // Step 1: Load Remote Data (Static Site)
+      // Tries to find db_index.json which tells us what is published
       try {
-        // Step 1: Fetch Index
-        // Add timestamp to prevent caching the index
         const indexRes = await fetch(`./${DB_INDEX_FILENAME}?t=${Date.now()}`);
-        
         if (indexRes.ok) {
           const ids: string[] = await indexRes.json();
-          console.log(`Index found with ${ids.length} entries. Fetching files...`);
-
-          // Step 2: Parallel Fetch of all ID files
+          ids.forEach(id => remoteIdsSet.add(id));
+          
           const promises = ids.map(id => 
              fetch(`./${DB_FOLDER}/${id}.json`)
-                .then(r => {
-                   if (!r.ok) throw new Error(`File ${id} missing`);
-                   return r.json();
-                })
-                .catch(err => {
-                   console.warn(`Failed to load ${id}:`, err);
-                   return null;
-                })
+                .then(r => r.ok ? r.json() : null)
+                .catch(err => null)
           );
-
           const results = await Promise.all(promises);
-          
           results.forEach((m) => {
-             if (m && m.id && !seenIds.has(m.id)) {
+             if (m && m.id) {
+                m.isRemote = true; // Mark as published
                 combinedMuses.push(m);
-                seenIds.add(m.id);
              }
           });
-        } else {
-           console.warn("db_index.json not found. Running in offline/local-only mode.");
         }
       } catch (e) { 
-        console.warn("Could not load static DB structure:", e); 
+        console.warn("Static DB load failed (offline or dev mode)."); 
       }
 
-      // Step 3: Merge with LocalStorage (User's private drafts/new creations)
+      // Step 2: Load Local DB (User drafts)
       try {
-        const localData = localStorage.getItem(STORAGE_KEY);
-        if (localData) {
-          const parsed = JSON.parse(localData);
-          if (Array.isArray(parsed)) {
-            parsed.forEach(m => {
-              if (!seenIds.has(m.id)) {
-                combinedMuses.unshift(m); // Add local drafts to TOP
-                seenIds.add(m.id);
-              }
-            });
+        const localItems = await dbAPI.getAll();
+        localItems.forEach(m => {
+          // Check if this local item is actually already published
+          if (remoteIdsSet.has(m.id)) {
+            // It exists in remote. 
+            // We usually prefer the local copy if we are editing, 
+            // OR we prefer remote if we want to show 'live' data.
+            // For this app, let's update the local flag to true.
+            m.isRemote = true;
+          } else {
+             m.isRemote = false; // It's a pure draft
           }
-        }
+
+          // Merge logic: If it exists in combined (from remote fetch), replace it or ignore?
+          // Let's assume Local IndexedDB is the "Source of Truth" for the admin.
+          const existingIndex = combinedMuses.findIndex(r => r.id === m.id);
+          if (existingIndex !== -1) {
+             combinedMuses[existingIndex] = m; // Update with local data which might be newer
+          } else {
+             combinedMuses.unshift(m); // Add new draft
+          }
+        });
       } catch (e) {
-        console.warn("Local storage error:", e);
+        console.warn("IndexedDB load failed:", e);
       }
 
-      // Final Set
       setMuses(combinedMuses);
       setFilteredMuses(combinedMuses);
       setLoading(false);
@@ -869,10 +891,9 @@ const App: React.FC = () => {
     initData();
   }, []);
 
-  // Filter Logic with simulated delay
+  // Filter Logic
   useEffect(() => {
     if (loading) return; 
-    
     setIsSearching(true);
     const delayDebounceFn = setTimeout(() => {
       if (!searchTerm.trim()) {
@@ -892,20 +913,25 @@ const App: React.FC = () => {
     return () => clearTimeout(delayDebounceFn);
   }, [searchTerm, muses, loading]);
 
-  // Save to LocalStorage whenever state changes (keeps drafts safe)
-  useEffect(() => {
-    if (!loading) saveToLocalStorage(STORAGE_KEY, muses);
-  }, [muses, loading]);
+  const handleCreateMuse = async (newMuse: MuseProfile) => {
+    // 1. Save to Persistent DB
+    await dbAPI.save(newMuse);
+    // 2. Update UI
+    setMuses(prev => [newMuse, ...prev]);
+  };
 
-  const handleCreateMuse = (newMuse: MuseProfile) => setMuses(prev => [newMuse, ...prev]);
-  const handleDeleteMuse = (id: string) => setMuses(prev => prev.filter(m => m.id !== id));
+  const handleDeleteMuse = async (id: string) => {
+    // 1. Remove from Persistent DB
+    await dbAPI.delete(id);
+    // 2. Update UI
+    setMuses(prev => prev.filter(m => m.id !== id));
+  };
   
-  // Kept for backward compatibility or full backup if user wants it
   const handleExportDB = () => {
      const blob = new Blob([JSON.stringify(muses, null, 2)], { type: "application/json" });
      const url = URL.createObjectURL(blob);
      const a = document.createElement("a");
-     a.href = url; a.download = "full_backup_legacy.json"; 
+     a.href = url; a.download = "full_backup.json"; 
      a.click();
   };
 
@@ -913,11 +939,15 @@ const App: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const imported = JSON.parse(event.target?.result as string);
         if (Array.isArray(imported)) {
-           // Merge strategy: Add imported ones to current state
+           // Save all to IDB
+           for (const m of imported) {
+             await dbAPI.save(m);
+           }
+           // Reload state
            setMuses(prev => {
              const existingIds = new Set(prev.map(m => m.id));
              const newOnes = imported.filter((m: any) => !existingIds.has(m.id));
@@ -966,12 +996,10 @@ const App: React.FC = () => {
                    </div>
                    
                    {isSearching ? (
-                     // Skeleton Loading State
                      Array.from({ length: 3 }).map((_, i) => (
                        <MuseSkeleton key={i} />
                      ))
                    ) : (
-                     // Filtered Results
                      filteredMuses.map((muse) => (
                         <div key={muse.id} onClick={() => { setActiveProfile(muse); setView('PROFILE'); }} className="group cursor-pointer">
                            <div className="relative aspect-[3/4] mb-8 overflow-hidden">

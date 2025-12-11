@@ -10,6 +10,7 @@ export interface MuseProfile {
   coverImage: string;
   physicalDescription?: string; // Used for AI consistency
   images: string[]; // Array of 8 images
+  isRemote?: boolean; // True se já estiver publicado no GitHub/Site
   content: {
     title: string;
     intro: string;
