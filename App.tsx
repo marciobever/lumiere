@@ -41,22 +41,21 @@ import {
   HardDrive,
   MessageCircle,
   Smartphone,
-  Heart
+  Heart,
+  Wifi,     
+  WifiOff,
+  FileUp // Added for JSON Upload icon
 } from 'lucide-react';
 import { MuseProfile, ViewState, DashboardInputs } from './types';
+import { db, storage } from './firebaseConfig';
+import { collection, onSnapshot, setDoc, doc, deleteDoc } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 // --- CONFIGURATION ---
-// IMPORTANTE: Substitua pelo seu ID de Publicador do AdSense
 const ADSENSE_PUB_ID = "ca-pub-0000000000000000"; 
-// URL RAW DO SEU REPOSITÓRIO GITHUB (Para o site ler os arquivos que você sobe)
-// Se você mudou o repositório no painel, você DEVE alterar esta linha para o seu usuário/repo
-const GITHUB_RAW_BASE = "https://raw.githubusercontent.com/marciobever/lumiere/main";
 
 // --- INITIAL DATA & STORAGE ---
 const INITIAL_MUSES: MuseProfile[] = [];
-const GITHUB_CONFIG_KEY = 'LUMIERE_GITHUB_CONFIG'; // GitHub Credentials
-const DB_INDEX_FILENAME = 'db_index.json'; // The "Map" of the database
-const DB_FOLDER = 'database'; // The folder where individual JSONs live
 
 // --- HELPER: API Key Handler ---
 const getApiKey = () => {
@@ -68,75 +67,6 @@ const getApiKey = () => {
     }
   } catch (e) {}
   return process.env.API_KEY || '';
-};
-
-// --- HELPER: Safe Storage (For lightweight config only) ---
-const saveToLocalStorage = (key: string, data: any) => {
-  try {
-    localStorage.setItem(key, JSON.stringify(data));
-  } catch (e: any) {
-    console.error(`Erro ao salvar ${key} no LocalStorage:`, e);
-  }
-};
-
-// --- INDEXED DB STORAGE (Fix for QuotaExceededError) ---
-// IndexedDB allows storing large amounts of data (Blobs/Base64) without the 5MB limit of LocalStorage.
-const IDB_CONFIG = { name: 'LUMIERE_DB', version: 1, store: 'muses' };
-
-const openDB = (): Promise<IDBDatabase> => {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(IDB_CONFIG.name, IDB_CONFIG.version);
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
-    request.onupgradeneeded = (event) => {
-      const db = (event.target as IDBOpenDBRequest).result;
-      if (!db.objectStoreNames.contains(IDB_CONFIG.store)) {
-        db.createObjectStore(IDB_CONFIG.store, { keyPath: 'id' });
-      }
-    };
-  });
-};
-
-const dbAPI = {
-  save: async (muse: MuseProfile) => {
-    try {
-      const db = await openDB();
-      return new Promise<void>((resolve, reject) => {
-        const tx = db.transaction(IDB_CONFIG.store, 'readwrite');
-        const store = tx.objectStore(IDB_CONFIG.store);
-        const request = store.put(muse);
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-      });
-    } catch (e) { console.error("IDB Save Error", e); throw e; }
-  },
-  getAll: async (): Promise<MuseProfile[]> => {
-    try {
-      const db = await openDB();
-      return new Promise((resolve, reject) => {
-        const tx = db.transaction(IDB_CONFIG.store, 'readonly');
-        const store = tx.objectStore(IDB_CONFIG.store);
-        const request = store.getAll();
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-      });
-    } catch (e) { 
-      console.warn("IDB Load Error or Empty", e); 
-      return []; 
-    }
-  },
-  delete: async (id: string) => {
-    try {
-      const db = await openDB();
-      return new Promise<void>((resolve, reject) => {
-        const tx = db.transaction(IDB_CONFIG.store, 'readwrite');
-        const store = tx.objectStore(IDB_CONFIG.store);
-        const request = store.delete(id);
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-      });
-    } catch (e) { console.error("IDB Delete Error", e); }
-  }
 };
 
 // --- HELPER: Clean JSON Parsing ---
@@ -154,63 +84,56 @@ const cleanAndParseJSON = (text: string) => {
 // --- HELPER: Delay for Rate Limiting ---
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// --- REMOTE DATA FETCHING (UPDATED FOR GITHUB RAW) ---
-const fetchRemoteMuses = async (): Promise<MuseProfile[]> => {
-  try {
-    // LÓGICA DE CORREÇÃO:
-    // Tenta usar a configuração do Admin salva no LocalStorage para montar a URL correta.
-    // Isso garante que se você configurou seu repo pessoal no painel, o site (no seu navegador) vai ler de lá,
-    // ignorando a constante hardcoded que pode estar errada.
-    let baseUrl = GITHUB_RAW_BASE;
-    
-    try {
-        const savedConfig = localStorage.getItem(GITHUB_CONFIG_KEY);
-        if (savedConfig) {
-            const { owner, repo, branch } = JSON.parse(savedConfig);
-            if (owner && repo) {
-                baseUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch || 'main'}`;
-                console.log("Using Admin Config for URL:", baseUrl);
-            }
-        }
-    } catch (e) { console.warn("Could not load admin config for URL override"); }
-
-    // 1. Fetch the Index File from GitHub Raw with Cache Busting
-    const indexUrl = `${baseUrl}/${DB_INDEX_FILENAME}?t=${Date.now()}`;
-    console.log("Fetching index:", indexUrl);
-    
-    const indexResponse = await fetch(indexUrl);
-    if (!indexResponse.ok) {
-        console.warn(`Index not found on GitHub yet (Status ${indexResponse.status}). Verifique se o repo é Público.`);
-        return [];
+// --- HELPER: Base64 to WebP Conversion ---
+const convertBase64ToWebP = (base64: string): Promise<Blob> => {
+  return new Promise((resolve, reject) => {
+    // Basic validation to prevent hanging on bad data
+    if (!base64 || typeof base64 !== 'string') {
+        reject(new Error("Invalid base64 data"));
+        return;
     }
+
+    const img = new Image();
     
-    const ids: string[] = await indexResponse.json();
-    if (!Array.isArray(ids) || ids.length === 0) return [];
+    // Timeout safeguard: if image doesn't load in 8s, reject
+    const timeout = setTimeout(() => {
+        reject(new Error("Image load timeout during conversion"));
+    }, 8000);
 
-    // 2. Fetch each profile JSON in parallel from GitHub Raw
-    const profilePromises = ids.map(async (id) => {
+    img.src = base64;
+    img.crossOrigin = "anonymous"; 
+    
+    img.onload = () => {
+      clearTimeout(timeout);
       try {
-        // Cache busting também nos arquivos individuais
-        const profileUrl = `${baseUrl}/${DB_FOLDER}/${id}.json?t=${Date.now()}`;
-        const res = await fetch(profileUrl);
-        if (!res.ok) return null;
-        const data = await res.json();
-        // Mark as remote so UI shows "Published"
-        return { ...data, isRemote: true } as MuseProfile;
-      } catch (e) {
-        console.error(`Failed to load profile ${id}`, e);
-        return null;
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            reject(new Error("Canvas context not available"));
+            return;
+          }
+          ctx.drawImage(img, 0, 0);
+          // Convert to WebP with 0.85 quality
+          canvas.toBlob((blob) => {
+            if (blob) {
+              resolve(blob);
+            } else {
+              reject(new Error("WebP conversion failed (empty blob)"));
+            }
+          }, 'image/webp', 0.85);
+      } catch (err) {
+          reject(err);
       }
-    });
-
-    const results = await Promise.all(profilePromises);
-    return results.filter((p): p is MuseProfile => p !== null);
-  } catch (e) {
-    console.warn("Could not fetch remote data (offline or local dev)", e);
-    return [];
-  }
+    };
+    
+    img.onerror = (e) => {
+        clearTimeout(timeout);
+        reject(new Error("Image load error"));
+    };
+  });
 };
-
 
 // --- OPTIMIZED IMAGE COMPONENT ---
 const OptimizedImage: React.FC<{ 
@@ -427,7 +350,6 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
 
   const relatedMuses = allMuses.filter(m => m.id !== profile.id).sort(() => 0.5 - Math.random()).slice(0, 3);
 
-  // LOOP INFINITO: Pega um perfil aleatório DIFERENTE do atual
   const handleRandomNext = () => {
      const others = allMuses.filter(m => m.id !== profile.id);
      if (others.length > 0) {
@@ -576,121 +498,144 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
 };
 
 // --- DASHBOARD ---
-const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; onDelete: (id: string) => Promise<void>; onExport: () => void; onImport: (e: React.ChangeEvent<HTMLInputElement>) => void; muses: MuseProfile[]; }> = ({ onGenerate, onDelete, onExport, onImport, muses }) => {
+const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; onDelete: (id: string) => Promise<void>; muses: MuseProfile[]; }> = ({ onGenerate, onDelete, muses }) => {
   const [inputs, setInputs] = useState<DashboardInputs>({ niche: '', name: '', details: '' });
   const [loading, setLoading] = useState(false);
   const [publishing, setPublishing] = useState<string | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [logs, setLogs] = useState<string[]>([]);
-  
-  const [ghConfig, setGhConfig] = useState<{owner: string, repo: string, token: string, branch: string}>({
-    owner: '', repo: '', token: '', branch: 'main'
-  });
-  const [showConfig, setShowConfig] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    const saved = localStorage.getItem(GITHUB_CONFIG_KEY);
-    if (saved) setGhConfig(JSON.parse(saved));
-  }, []);
+  const addLog = (msg: string) => setLogs(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev]);
 
-  const addLog = (msg: string) => setLogs(prev => [...prev, `> ${msg}`]);
+  // --- JSON UPLOAD HANDLER ---
+  const handleJsonUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-  const saveGhConfig = () => {
-    saveToLocalStorage(GITHUB_CONFIG_KEY, ghConfig);
-    setShowConfig(false);
-    alert("Configuração do GitHub salva!");
+    addLog(`Carregando arquivo: ${file.name}...`);
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const text = event.target?.result as string;
+        const json = JSON.parse(text) as MuseProfile;
+        
+        // Basic validation
+        if (!json.name || !json.images) {
+            throw new Error("Formato inválido. Necessário 'name' e 'images'.");
+        }
+
+        // Ensure ID is unique and not remote yet
+        json.id = Date.now().toString(); 
+        json.isRemote = false;
+
+        await onGenerate(json);
+        addLog("Sucesso: Perfil carregado do JSON! Agora clique em 'Salvar no DB'.");
+      } catch (err: any) {
+        addLog(`Erro ao ler JSON: ${err.message}`);
+        alert("Erro ao ler o arquivo JSON. Verifique o formato.");
+      }
+    };
+    reader.readAsText(file);
+    // Reset input
+    if(fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  // --- GITHUB API HELPER ---
-  const publishToGitHub = async (muse: MuseProfile) => {
-    if (!ghConfig.token || !ghConfig.owner || !ghConfig.repo) {
-       alert("Configure o GitHub primeiro!");
-       setShowConfig(true);
-       return;
+  // --- FIREBASE TEST CONNECTION ---
+  const handleTestConnection = async () => {
+    setConnectionStatus('testing');
+    addLog("Iniciando teste de conexão com Firestore...");
+    try {
+      const testRef = doc(db, "system", "connection_check");
+      await setDoc(testRef, {
+        last_check: new Date().toISOString(),
+        status: "active",
+        agent: navigator.userAgent
+      });
+      setConnectionStatus('success');
+      addLog("SUCESSO: Conexão verificada! Gravação permitida.");
+      alert("Conexão com Banco de Dados: OK! ✅\n\nAs gravações estão funcionando corretamente.");
+    } catch (e: any) {
+      console.error(e);
+      setConnectionStatus('error');
+      addLog(`FALHA DE CONEXÃO: ${e.message}`);
+      alert(`ERRO DE CONEXÃO ❌\n\nDetalhe: ${e.message}\n\nDica: Verifique se as 'Regras' (Rules) do Firestore estão em 'Modo de Teste' (allow read, write: if true).`);
     }
+  };
 
+  // --- FIREBASE PUBLISH ---
+  const publishToFirebase = async (muse: MuseProfile) => {
     setPublishing(muse.id);
-    addLog(`Iniciando publicação automática no GitHub: ${ghConfig.repo}...`);
+    addLog(`Iniciando publicação no Banco de Dados...`);
 
     try {
-       const headers = {
-         'Authorization': `token ${ghConfig.token}`,
-         'Content-Type': 'application/json',
+       // 1. Upload Cover
+       addLog(`Processando capa...`);
+       let coverUrl = muse.coverImage;
+       
+       if (!muse.coverImage.startsWith('http')) {
+           try {
+             const coverBlob = await convertBase64ToWebP(muse.coverImage);
+             const coverRef = ref(storage, `muses/${muse.id}/cover.webp`);
+             await uploadBytes(coverRef, coverBlob);
+             coverUrl = await getDownloadURL(coverRef);
+             addLog("Capa enviada.");
+           } catch (coverErr) {
+             console.error("Erro na capa, usando original", coverErr);
+             addLog("Aviso: Falha na conversão da capa, verifique o console.");
+             // Continue even if cover fails optimization (optional fallback logic could be here)
+           }
+       }
+       
+       // 2. Upload Gallery
+       const imageUrls: string[] = [];
+       let count = 1;
+       const uniqueImages = Array.from(new Set(muse.images));
+       
+       for (const imgBase64 of uniqueImages) {
+           if (imgBase64.startsWith('http')) {
+               imageUrls.push(imgBase64); // Already a URL
+               continue;
+           }
+           
+           try {
+             addLog(`Enviando foto ${count}/${uniqueImages.length}...`);
+             // Add timeout safeguard to prevent hanging
+             const blob = await convertBase64ToWebP(imgBase64);
+             const imgRef = ref(storage, `muses/${muse.id}/gallery_${count}.webp`);
+             await uploadBytes(imgRef, blob);
+             const url = await getDownloadURL(imgRef);
+             imageUrls.push(url);
+           } catch (imgErr: any) {
+             console.error(`Erro na imagem ${count}:`, imgErr);
+             addLog(`Erro na foto ${count}, pulando...`);
+           }
+           count++;
+       }
+
+       // Fill to maintain structure logic (fallback to cover if gallery failed)
+       if (imageUrls.length === 0) imageUrls.push(coverUrl);
+       while(imageUrls.length < 8) {
+           imageUrls.push(imageUrls[0]); 
+       }
+
+       addLog("Salvando metadados no Firestore...");
+       const firestoreData: MuseProfile = {
+           ...muse,
+           coverImage: coverUrl,
+           images: imageUrls,
+           isRemote: true
        };
-       const baseUrl = `https://api.github.com/repos/${ghConfig.owner}/${ghConfig.repo}/contents`;
 
-       const modelContent = btoa(unescape(encodeURIComponent(JSON.stringify(muse, null, 2))));
-       const modelPath = `${DB_FOLDER}/${muse.id}.json`;
+       await setDoc(doc(db, "muses", muse.id), firestoreData);
        
-       addLog(`Enviando arquivo: ${modelPath}...`);
-       
-       let sha = undefined;
-       try {
-          const checkRes = await fetch(`${baseUrl}/${modelPath}`, { headers });
-          if (checkRes.ok) {
-             const data = await checkRes.json();
-             sha = data.sha;
-          }
-       } catch (e) {}
-
-       const modelRes = await fetch(`${baseUrl}/${modelPath}`, {
-         method: 'PUT',
-         headers,
-         body: JSON.stringify({
-           message: `Add Model: ${muse.name}`,
-           content: modelContent,
-           branch: ghConfig.branch,
-           sha: sha
-         })
-       });
-
-       if (!modelRes.ok) throw new Error(`Erro ao subir modelo: ${modelRes.status}`);
-
-       addLog("Atualizando índice (db_index.json)...");
-       const indexRes = await fetch(`${baseUrl}/${DB_INDEX_FILENAME}`, { headers });
-       let indexSha = undefined;
-       let currentIndex: string[] = [];
-
-       if (indexRes.ok) {
-          const indexData = await indexRes.json();
-          indexSha = indexData.sha;
-          try {
-             const decodedContent = decodeURIComponent(escape(atob(indexData.content)));
-             currentIndex = JSON.parse(decodedContent);
-          } catch (e) { console.error("Index parse error", e); }
-       }
-
-       if (!currentIndex.includes(muse.id)) {
-          currentIndex.push(muse.id);
-       }
-
-       const newIndexContent = btoa(unescape(encodeURIComponent(JSON.stringify(currentIndex, null, 2))));
-
-       const updateIndexRes = await fetch(`${baseUrl}/${DB_INDEX_FILENAME}`, {
-         method: 'PUT',
-         headers,
-         body: JSON.stringify({
-           message: `Update Index for ${muse.name}`,
-           content: newIndexContent,
-           branch: ghConfig.branch,
-           sha: indexSha
-         })
-       });
-
-       if (!updateIndexRes.ok) throw new Error("Erro ao atualizar índice.");
-
-       // Atualiza estado local para refletir que foi publicado
-       await dbAPI.save({...muse, isRemote: true});
-       
-       // Força reload da página ou do estado para atualizar badge
-       window.location.reload(); 
-
-       addLog("SUCESSO! Publicado no GitHub.");
-       alert(`Sucesso! ${muse.name} foi publicada no GitHub.`);
+       addLog("SUCESSO! Publicado na nuvem.");
+       alert(`Sucesso! ${muse.name} foi salva no banco de dados.`);
 
     } catch (err: any) {
        console.error(err);
        addLog(`ERRO DE PUBLICAÇÃO: ${err.message}`);
-       alert("Erro ao publicar. Verifique o Token e o console.");
+       alert("Erro ao publicar no Firebase. Verifique o console.");
     } finally {
        setPublishing(null);
     }
@@ -885,52 +830,41 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
     a.click();
   };
 
-  const handleDownloadIndex = () => {
-    const ids = muses.map(m => m.id);
-    const blob = new Blob([JSON.stringify(ids, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = DB_INDEX_FILENAME;
-    a.click();
-  };
-
   return (
     <div className="bg-[#111] min-h-screen pt-32 pb-20 px-6">
       <div className="container mx-auto max-w-4xl">
         <h2 className="text-4xl text-white font-serif mb-8 flex items-center gap-4"><LayoutDashboard className="text-yellow-600" /> Painel de Criação</h2>
         
-        {/* SETTINGS BOX */}
-        <div className="bg-gray-900 border border-white/10 p-6 rounded-lg mb-8">
-           <div className="flex justify-between items-center mb-4">
-              <h3 className="text-white font-bold uppercase tracking-widest text-sm flex items-center gap-2"><Settings size={16} /> Configuração de Publicação Automática (CMS)</h3>
-              <button onClick={() => setShowConfig(!showConfig)} className="text-yellow-600 text-xs hover:underline">{showConfig ? 'Fechar Configurações' : 'Editar Configurações'}</button>
-           </div>
-           
-           {showConfig && (
-             <div className="bg-black/50 p-6 rounded border border-white/10 animate-fade-in">
-                <p className="text-gray-400 text-xs mb-4">Para publicar diretamente no seu site hospedado, preencha os dados do GitHub abaixo. O token precisa de permissão 'repo' completa.</p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                   <input placeholder="Usuário GitHub (ex: seu-nome)" value={ghConfig.owner} onChange={e => setGhConfig({...ghConfig, owner: e.target.value})} className="bg-black border border-white/20 p-3 text-white text-sm" />
-                   <input placeholder="Nome do Repositório (ex: lumiere-app)" value={ghConfig.repo} onChange={e => setGhConfig({...ghConfig, repo: e.target.value})} className="bg-black border border-white/20 p-3 text-white text-sm" />
-                   <input placeholder="Personal Access Token (ghp_...)" value={ghConfig.token} onChange={e => setGhConfig({...ghConfig, token: e.target.value})} className="bg-black border border-white/20 p-3 text-white text-sm md:col-span-2" type="password" />
-                </div>
-                <button onClick={saveGhConfig} className="bg-yellow-600 text-black px-4 py-2 font-bold text-sm rounded hover:bg-yellow-500">Salvar Conexão</button>
-             </div>
-           )}
-
-           {!ghConfig.token && !showConfig && (
-              <div className="flex items-center gap-2 text-yellow-600 text-xs bg-yellow-900/10 p-2 rounded">
-                <AlertCircle size={14} />
-                <span>Configure o GitHub acima para publicar automaticamente sem baixar arquivos.</span>
-              </div>
-           )}
-        </div>
-
         <div className="bg-gray-900 p-6 rounded-lg border border-white/10 mb-12 flex flex-wrap gap-4 items-center justify-between">
            <div><h3 className="text-white font-bold uppercase tracking-widest text-sm mb-1">Gerenciamento de Dados</h3><p className="text-gray-500 text-xs">Total: {muses.length} modelos</p></div>
+           
            <div className="flex gap-4">
-              <button onClick={handleDownloadIndex} className="flex items-center gap-2 px-6 py-3 bg-white text-black hover:bg-yellow-500 transition-colors text-sm font-bold uppercase tracking-wide rounded-sm shadow-lg"><Database size={18} /> Baixar Índice Manual</button>
+              {/* HIDDEN FILE INPUT */}
+              <input type="file" accept=".json" ref={fileInputRef} onChange={handleJsonUpload} className="hidden" />
+              
+              <button 
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center gap-2 px-4 py-2 text-xs font-bold uppercase tracking-wide rounded border bg-blue-900/40 border-blue-500 text-blue-400 hover:bg-blue-800 transition-colors"
+              >
+                 <FileUp size={16} /> Carregar JSON
+              </button>
+
+              <button 
+                onClick={handleTestConnection}
+                disabled={connectionStatus === 'testing'}
+                className={`flex items-center gap-2 px-4 py-2 text-xs font-bold uppercase tracking-wide rounded border transition-colors ${
+                    connectionStatus === 'success' ? 'bg-green-900/40 border-green-500 text-green-400' : 
+                    connectionStatus === 'error' ? 'bg-red-900/40 border-red-500 text-red-400' : 
+                    'bg-gray-800 border-gray-600 text-gray-300 hover:bg-gray-700'
+                }`}
+              >
+                 {connectionStatus === 'testing' ? <Loader2 className="animate-spin" size={16} /> : <Activity size={16} />}
+                 {connectionStatus === 'testing' ? 'Testando...' : 'Testar Conexão'}
+              </button>
+              
+              <div className="flex items-center gap-2 px-6 py-3 bg-green-900/20 text-green-500 text-sm font-bold uppercase tracking-wide rounded-sm border border-green-500/30">
+                 <Database size={18} /> Banco de Dados Ativo
+              </div>
            </div>
         </div>
 
@@ -956,7 +890,7 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
                     <h4 className="text-white font-bold flex items-center gap-2">
                        {muse.name}
                        {muse.isRemote ? (
-                          <span className="text-[10px] bg-green-900/50 text-green-400 px-2 py-[2px] rounded border border-green-800 uppercase tracking-widest flex items-center gap-1"><Globe2 size={10} /> Publicado</span>
+                          <span className="text-[10px] bg-green-900/50 text-green-400 px-2 py-[2px] rounded border border-green-800 uppercase tracking-widest flex items-center gap-1"><Database size={10} /> Salvo no DB</span>
                        ) : (
                           <span className="text-[10px] bg-gray-800 text-gray-400 px-2 py-[2px] rounded border border-gray-700 uppercase tracking-widest flex items-center gap-1"><HardDrive size={10} /> Rascunho</span>
                        )}
@@ -966,16 +900,16 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
                 </div>
                 <div className="flex items-center gap-2">
                    {/* ACTION BUTTONS */}
-                   {ghConfig.token ? (
-                      <button 
-                        onClick={() => publishToGitHub(muse)} 
-                        disabled={publishing === muse.id}
-                        className={`flex items-center gap-2 px-3 py-2 border transition-colors text-xs font-bold uppercase tracking-wide rounded ${publishing === muse.id ? 'bg-yellow-600 border-yellow-600 text-black' : (muse.isRemote ? 'bg-gray-800 border-gray-600 text-gray-400 hover:bg-gray-700' : 'bg-green-900/30 border-green-600 text-green-500 hover:bg-green-600 hover:text-white')}`}
-                      >
-                        {publishing === muse.id ? <Loader2 className="animate-spin" size={14}/> : <CloudUpload size={14} />} 
-                        {publishing === muse.id ? 'Enviando...' : (muse.isRemote ? 'Re-publicar' : 'Publicar')}
-                      </button>
-                   ) : (
+                   <button 
+                    onClick={() => publishToFirebase(muse)} 
+                    disabled={publishing === muse.id}
+                    className={`flex items-center gap-2 px-3 py-2 border transition-colors text-xs font-bold uppercase tracking-wide rounded ${publishing === muse.id ? 'bg-yellow-600 border-yellow-600 text-black' : (muse.isRemote ? 'bg-gray-800 border-gray-600 text-gray-400 hover:bg-gray-700' : 'bg-green-900/30 border-green-600 text-green-500 hover:bg-green-600 hover:text-white')}`}
+                    >
+                    {publishing === muse.id ? <Loader2 className="animate-spin" size={14}/> : <CloudUpload size={14} />} 
+                    {publishing === muse.id ? 'Enviando ao DB...' : (muse.isRemote ? 'Atualizar DB' : 'Salvar no DB')}
+                   </button>
+
+                   {!muse.isRemote && (
                       <button onClick={() => handleDownloadSingle(muse)} className="flex items-center gap-2 px-3 py-2 bg-black border border-white/20 text-white hover:text-yellow-500 hover:border-yellow-500 transition-colors text-xs font-bold uppercase tracking-wide rounded"><FileJson size={14} /> JSON</button>
                    )}
                    <button onClick={() => onDelete(muse.id)} className="text-gray-600 hover:text-red-500 p-2 transition-colors"><Trash2 size={18} /></button>
@@ -994,37 +928,39 @@ const App: React.FC = () => {
   const [selectedProfile, setSelectedProfile] = useState<MuseProfile | null>(null);
 
   useEffect(() => {
-    const loadMuses = async () => {
-      // 1. Carrega dados locais (IndexedDB)
-      const stored = await dbAPI.getAll();
-      
-      // 2. Carrega dados remotos (GitHub/Server)
-      const remoteData = await fetchRemoteMuses();
+    // Escutar mudanças no Firestore em tempo real
+    const unsubscribe = onSnapshot(collection(db, "muses"), (snapshot) => {
+        const remoteMuses: MuseProfile[] = [];
+        snapshot.forEach((doc) => {
+            remoteMuses.push(doc.data() as MuseProfile);
+        });
+        
+        setMuses(prev => {
+            // Mantém os rascunhos locais que ainda não foram salvos no DB
+            const localDrafts = prev.filter(p => !p.isRemote && !remoteMuses.find(rm => rm.id === p.id));
+            const merged = [...remoteMuses, ...localDrafts];
+            return merged.sort((a, b) => Number(b.id) - Number(a.id));
+        });
+    });
 
-      // 3. Mescla os dois (Remote tem prioridade ou apenas soma se ID for novo)
-      const allMusesMap = new Map<string, MuseProfile>();
-      
-      // Adiciona locais
-      stored.forEach(m => allMusesMap.set(m.id, m));
-      
-      // Adiciona remotos (sobrescrevendo se existir, pois servidor é a "verdade")
-      remoteData.forEach(m => allMusesMap.set(m.id, m));
-
-      const mergedList = Array.from(allMusesMap.values()).sort((a, b) => Number(b.id) - Number(a.id));
-      setMuses(mergedList);
-    };
-    loadMuses();
+    return () => unsubscribe();
   }, []);
 
   const handleGenerate = async (newMuse: MuseProfile) => {
-    await dbAPI.save(newMuse);
+    // Apenas adiciona ao estado localmente como rascunho
     setMuses(prev => [newMuse, ...prev]);
   };
 
   const handleDelete = async (id: string) => {
-    if (confirm("Tem certeza que deseja excluir este perfil?")) {
-      await dbAPI.delete(id);
-      setMuses(prev => prev.filter(m => m.id !== id));
+    if (confirm("Tem certeza que deseja excluir este perfil do Banco de Dados?")) {
+      try {
+          // Deleta do Firestore (não deleta do Storage automaticamente, mas remove da lista)
+          await deleteDoc(doc(db, "muses", id));
+          // Atualiza estado local imediatamente
+          setMuses(prev => prev.filter(m => m.id !== id));
+      } catch (e) {
+          console.error("Erro ao deletar", e);
+      }
     }
   };
 
@@ -1099,8 +1035,6 @@ const App: React.FC = () => {
             onGenerate={handleGenerate} 
             onDelete={handleDelete} 
             muses={muses} 
-            onExport={() => {}} 
-            onImport={(e) => {}} 
          />
        )}
     </div>
