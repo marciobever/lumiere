@@ -148,6 +148,39 @@ const cleanAndParseJSON = (text: string) => {
 // --- HELPER: Delay for Rate Limiting ---
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+// --- REMOTE DATA FETCHING (NEW) ---
+const fetchRemoteMuses = async (): Promise<MuseProfile[]> => {
+  try {
+    // 1. Fetch the Index File (with cache busting)
+    const indexResponse = await fetch(`/${DB_INDEX_FILENAME}?t=${Date.now()}`);
+    if (!indexResponse.ok) return [];
+    
+    const ids: string[] = await indexResponse.json();
+    if (!Array.isArray(ids) || ids.length === 0) return [];
+
+    // 2. Fetch each profile JSON in parallel
+    const profilePromises = ids.map(async (id) => {
+      try {
+        const res = await fetch(`/${DB_FOLDER}/${id}.json`);
+        if (!res.ok) return null;
+        const data = await res.json();
+        // Mark as remote so UI shows "Published"
+        return { ...data, isRemote: true } as MuseProfile;
+      } catch (e) {
+        console.error(`Failed to load profile ${id}`, e);
+        return null;
+      }
+    });
+
+    const results = await Promise.all(profilePromises);
+    return results.filter((p): p is MuseProfile => p !== null);
+  } catch (e) {
+    console.warn("Could not fetch remote data (offline or local dev)", e);
+    return [];
+  }
+};
+
+
 // --- OPTIMIZED IMAGE COMPONENT ---
 const OptimizedImage: React.FC<{ 
   src: string; 
@@ -846,8 +879,23 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const loadMuses = async () => {
+      // 1. Carrega dados locais (IndexedDB)
       const stored = await dbAPI.getAll();
-      setMuses(stored.sort((a, b) => Number(b.id) - Number(a.id)));
+      
+      // 2. Carrega dados remotos (GitHub/Server)
+      const remoteData = await fetchRemoteMuses();
+
+      // 3. Mescla os dois (Remote tem prioridade ou apenas soma se ID for novo)
+      const allMusesMap = new Map<string, MuseProfile>();
+      
+      // Adiciona locais
+      stored.forEach(m => allMusesMap.set(m.id, m));
+      
+      // Adiciona remotos (sobrescrevendo se existir, pois servidor é a "verdade")
+      remoteData.forEach(m => allMusesMap.set(m.id, m));
+
+      const mergedList = Array.from(allMusesMap.values()).sort((a, b) => Number(b.id) - Number(a.id));
+      setMuses(mergedList);
     };
     loadMuses();
   }, []);
