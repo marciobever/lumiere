@@ -33,7 +33,10 @@ import {
   Github,
   FileJson,
   FolderOpen,
-  Database
+  Database,
+  CloudUpload,
+  Settings,
+  AlertCircle
 } from 'lucide-react';
 import { MuseProfile, ViewState, DashboardInputs } from './types';
 
@@ -44,15 +47,16 @@ const ADSENSE_PUB_ID = "ca-pub-0000000000000000";
 // --- INITIAL DATA & STORAGE ---
 const INITIAL_MUSES: MuseProfile[] = [];
 const STORAGE_KEY = 'LUMIERE_MUSES_DB_V4'; // Local drafts
+const GITHUB_CONFIG_KEY = 'LUMIERE_GITHUB_CONFIG'; // GitHub Credentials
 const DB_INDEX_FILENAME = 'db_index.json'; // The "Map" of the database
 const DB_FOLDER = 'database'; // The folder where individual JSONs live
 
 // --- HELPER: Safe Storage ---
-const saveToLocalStorage = (muses: MuseProfile[]) => {
+const saveToLocalStorage = (key: string, data: any) => {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(muses));
+    localStorage.setItem(key, JSON.stringify(data));
   } catch (e: any) {
-    console.error("Erro ao salvar no LocalStorage:", e);
+    console.error(`Erro ao salvar ${key} no LocalStorage:`, e);
   }
 };
 
@@ -117,13 +121,11 @@ const SmartAdUnit: React.FC<{ slotId: string; format: 'auto' | 'fluid' | 'rectan
   const adRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Only push if not already loaded in this specific ref instance to avoid React strict mode duplicates
-    // However, basic push is usually safe as AdSense handles duplicates.
     try {
         // @ts-ignore
         (window.adsbygoogle = window.adsbygoogle || []).push({});
     } catch (e) {
-        console.error("AdSense push error", e);
+        // console.error("AdSense push error", e); // Suppress errors in dev
     }
   }, [slotId]);
 
@@ -412,8 +414,123 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
 const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => void; onDelete: (id: string) => void; onExport: () => void; onImport: (e: React.ChangeEvent<HTMLInputElement>) => void; muses: MuseProfile[]; }> = ({ onGenerate, onDelete, onExport, onImport, muses }) => {
   const [inputs, setInputs] = useState<DashboardInputs>({ niche: '', name: '', details: '' });
   const [loading, setLoading] = useState(false);
+  const [publishing, setPublishing] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
+  
+  // GitHub Config State
+  const [ghConfig, setGhConfig] = useState<{owner: string, repo: string, token: string, branch: string}>({
+    owner: '', repo: '', token: '', branch: 'main'
+  });
+  const [showConfig, setShowConfig] = useState(false);
+
+  // Load Config on Mount
+  useEffect(() => {
+    const saved = localStorage.getItem(GITHUB_CONFIG_KEY);
+    if (saved) setGhConfig(JSON.parse(saved));
+  }, []);
+
   const addLog = (msg: string) => setLogs(prev => [...prev, `> ${msg}`]);
+
+  const saveGhConfig = () => {
+    saveToLocalStorage(GITHUB_CONFIG_KEY, ghConfig);
+    setShowConfig(false);
+    alert("Configuração do GitHub salva!");
+  };
+
+  // --- GITHUB API HELPER ---
+  const publishToGitHub = async (muse: MuseProfile) => {
+    if (!ghConfig.token || !ghConfig.owner || !ghConfig.repo) {
+       alert("Configure o GitHub primeiro!");
+       setShowConfig(true);
+       return;
+    }
+
+    setPublishing(muse.id);
+    addLog(`Iniciando publicação automática no GitHub: ${ghConfig.repo}...`);
+
+    try {
+       const headers = {
+         'Authorization': `token ${ghConfig.token}`,
+         'Content-Type': 'application/json',
+       };
+       const baseUrl = `https://api.github.com/repos/${ghConfig.owner}/${ghConfig.repo}/contents`;
+
+       // 1. Upload Model JSON
+       const modelContent = btoa(unescape(encodeURIComponent(JSON.stringify(muse, null, 2)))); // Handle unicode
+       const modelPath = `${DB_FOLDER}/${muse.id}.json`;
+       
+       addLog(`Enviando arquivo: ${modelPath}...`);
+       
+       // Check if file exists (to get SHA for update, though usually new)
+       let sha = undefined;
+       try {
+          const checkRes = await fetch(`${baseUrl}/${modelPath}`, { headers });
+          if (checkRes.ok) {
+             const data = await checkRes.json();
+             sha = data.sha;
+          }
+       } catch (e) {}
+
+       const modelRes = await fetch(`${baseUrl}/${modelPath}`, {
+         method: 'PUT',
+         headers,
+         body: JSON.stringify({
+           message: `Add Model: ${muse.name}`,
+           content: modelContent,
+           branch: ghConfig.branch,
+           sha: sha
+         })
+       });
+
+       if (!modelRes.ok) throw new Error(`Erro ao subir modelo: ${modelRes.status}`);
+
+       // 2. Update Index
+       addLog("Atualizando índice (db_index.json)...");
+       const indexRes = await fetch(`${baseUrl}/${DB_INDEX_FILENAME}`, { headers });
+       let indexSha = undefined;
+       let currentIndex: string[] = [];
+
+       if (indexRes.ok) {
+          const indexData = await indexRes.json();
+          indexSha = indexData.sha;
+          // Decode Base64 content from GitHub
+          try {
+             const decodedContent = decodeURIComponent(escape(atob(indexData.content)));
+             currentIndex = JSON.parse(decodedContent);
+          } catch (e) { console.error("Index parse error", e); }
+       }
+
+       // Add new ID if not exists
+       if (!currentIndex.includes(muse.id)) {
+          currentIndex.push(muse.id);
+       }
+
+       const newIndexContent = btoa(unescape(encodeURIComponent(JSON.stringify(currentIndex, null, 2))));
+
+       const updateIndexRes = await fetch(`${baseUrl}/${DB_INDEX_FILENAME}`, {
+         method: 'PUT',
+         headers,
+         body: JSON.stringify({
+           message: `Update Index for ${muse.name}`,
+           content: newIndexContent,
+           branch: ghConfig.branch,
+           sha: indexSha
+         })
+       });
+
+       if (!updateIndexRes.ok) throw new Error("Erro ao atualizar índice.");
+
+       addLog("SUCESSO! Publicado no GitHub. O site deve atualizar em 2-3 minutos.");
+       alert(`Sucesso! ${muse.name} foi publicada no GitHub. Aguarde o deploy.`);
+
+    } catch (err: any) {
+       console.error(err);
+       addLog(`ERRO DE PUBLICAÇÃO: ${err.message}`);
+       alert("Erro ao publicar. Verifique o Token e o console.");
+    } finally {
+       setPublishing(null);
+    }
+  };
 
   const generateRandomPersona = async () => {
     setLoading(true);
@@ -424,17 +541,34 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => void; onDelete: (
     const randomEthnicity = ethnicities[Math.floor(Math.random() * ethnicities.length)];
     const randomHair = hairStyles[Math.floor(Math.random() * hairStyles.length)];
     const randomFeature = distinctFeatures[Math.floor(Math.random() * distinctFeatures.length)];
-    const physicalPrompt = `Extremely beautiful Woman of ${randomEthnicity} descent, featuring ${randomHair} and ${randomFeature}. Luxury high-fashion model look, fit physique, hourglass figure, drop-dead gorgeous.`;
+    const physicalPrompt = `Extremely beautiful Woman of ${randomEthnicity} descent, featuring ${randomHair} and ${randomFeature}. Luxury high-fashion model look, fit physique, hourglass figure, drop-dead gorgeous, elegant posture.`;
 
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
-      const prompt = `Gere um perfil JSON para uma modelo 'Femme Fatale' de luxo para um site de alto CPM. O nicho deve ser EXTREMAMENTE valioso e específico (Ex: Mesotelioma, Empréstimos Estudantis, Cloud Computing, Forex Trading). NÃO GERE A DESCRIÇÃO FÍSICA. USE ESTA: "${physicalPrompt}". Retorne APENAS um JSON: {"name": "Nome Elegante", "niche": "Nicho High Ticket", "details": "${physicalPrompt}"}`;
+      // UPDATED PROMPT: Avoid "Femme Fatale" to reduce refusals, emphasize variety
+      const prompt = `Generate a JSON profile for a High-End Luxury Consultant or Model. 
+      The Name must be culturally appropriate for: ${randomEthnicity}.
+      The Niche must be a High CPM topic (e.g., Mesothelioma, Insurance, Mortgage, Crypto, Luxury Real Estate, Tech Law). 
+      DO NOT USE "Finance" every time. Vary the niche!
+      
+      Output JSON ONLY: {"name": "Elegant Name", "niche": "High Ticket Niche", "details": "${physicalPrompt}"}`;
+      
       const result = await ai.models.generateContent({ model: "gemini-2.5-flash", contents: prompt, config: { responseMimeType: "application/json" } });
       const data = cleanAndParseJSON(result.text || "{}");
       setInputs({ name: data.name, niche: data.niche, details: physicalPrompt });
       addLog(`DNA: ${randomEthnicity} + ${randomHair}`);
       addLog(`Persona: ${data.name} - ${data.niche}`);
-    } catch (error) { console.error(error); addLog("Erro ao gerar persona."); setInputs({ name: "Sofia", niche: "Finance", details: physicalPrompt }); } finally { setLoading(false); }
+    } catch (error) { 
+      console.error(error); 
+      // RANDOM FALLBACKS (No more fixed Sofia/Finance)
+      const fallbackNames = ["Isabella", "Valentina", "Genevieve", "Anastasia", "Dominique", "Zara", "Yasmin"];
+      const fallbackNiches = ["Forex Trading", "Luxury Real Estate", "Cybersecurity", "Maritime Law", "Cloud Computing", "Biotech Investment"];
+      const rName = fallbackNames[Math.floor(Math.random() * fallbackNames.length)];
+      const rNiche = fallbackNiches[Math.floor(Math.random() * fallbackNiches.length)];
+      
+      addLog("IA ocupada, usando dados aleatórios locais."); 
+      setInputs({ name: rName, niche: rNiche, details: physicalPrompt }); 
+    } finally { setLoading(false); }
   };
 
   const handleGenerate = async () => {
@@ -445,40 +579,47 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => void; onDelete: (
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
       addLog("Escrevendo artigo de 6 parágrafos + FAQ...");
       
-      // UPDATED PROMPT: More Explicit about Tone and stricter on JSON
-      const textPrompt = `You are a top-tier lifestyle editor for a luxury men's magazine (like GQ/Maxim/Vogue).
-      Create a JSON profile for "${inputs.name}", a specialist in "${inputs.niche}".
+      // UPDATED PROMPT: High Density Content, Less Markdown
+      const textPrompt = `You are the Editor-in-Chief of a high-end luxury lifestyle & business magazine (like Monocle meets Vogue).
+      Create a JSON profile for "${inputs.name}", an elite consultant in "${inputs.niche}".
       Language: PT-BR (Portuguese).
       
-      TONE: Extroverted, seductive, smart, and "spicy" (flirty, use double entendres, confident, but STRICTLY NO PORNOGRAPHY/NSFW/EXPLICIT TERMS). She should sound like a high-end consultant who is also incredibly charming.
-      CONTENT: Dense, valuable information about the niche, mixed with personal anecdotes.
+      TONE: Sophisticated, intellectual, authoritative yet slightly provocative. She is an expert.
+      CONTENT:
+      - Deep technical insight about ${inputs.niche} (High CPM keywords).
+      - Mixed with a luxurious lifestyle narrative (travels, art, wine).
+      - 6 dense paragraphs.
       
-      FORMAT: PLAIN JSON ONLY. NO Markdown (\`\`\`), NO asterisks (**).
-      
+      FORMAT: PLAIN JSON ONLY. NO Markdown.
       Schema:
       {
-        "tagline": "Short, catchy, seductive phrase",
-        "title": "Clickbait High-CTR Title",
-        "intro": "Seductive introduction",
+        "tagline": "Elegant & catchy one-liner",
+        "title": "A sophisticated, high-CTR headline about ${inputs.niche}",
+        "intro": "A captivating introduction blending her beauty with her intellect",
         "bodyParagraphs": [
-           "Paragraph 1: Introduction to the niche topic (Technical/Smart)",
-           "Paragraph 2: Lifestyle angle (Luxury/Travel)",
-           "Paragraph 3: Deep dive strategy (Valuable info)",
-           "Paragraph 4: A personal/spicy anecdote related to the topic",
-           "Paragraph 5: Expert analysis",
-           "Paragraph 6: Seductive conclusion"
+           "Para 1: Deep dive into the market trends of ${inputs.niche} (Technical)",
+           "Para 2: Her personal approach/strategy (Business)",
+           "Para 3: A luxury lifestyle anecdote related to her work (Travel/Dining)",
+           "Para 4: Specific advice for high-net-worth individuals",
+           "Para 5: Future outlook of the industry",
+           "Para 6: A memorable, elegant conclusion"
         ],
-        "keywords": ["5 high value keywords"],
-        "expertVerdict": "Authoritative summary",
-        "faqs": [{"question": "Specific Q?", "answer": "Detailed A"}],
-        "insiderSecret": "A very specific, high-value secret about the niche"
+        "keywords": ["5 very high CPM keywords for AdSense"],
+        "expertVerdict": "A quote from Lumière validating her expertise",
+        "faqs": [{"question": "Technical Question 1?", "answer": "Detailed Answer"}, {"question": "Technical Question 2?", "answer": "Detailed Answer"}],
+        "insiderSecret": "A very specific, valuable insider tip about ${inputs.niche}"
       }`;
 
       const textResult = await ai.models.generateContent({ model: "gemini-2.5-flash", contents: textPrompt, config: { responseMimeType: "application/json" } });
       const content = cleanAndParseJSON(textResult.text || "{}");
 
-      addLog("Fotografando capa (Raw Candid)...");
-      const basePrompt = `Portrait of a woman (${inputs.details}). Style: Raw candid, grainy film look, real skin texture with faint freckles/pores, natural lighting, cinematic lens flare, high-end fashion/lingerie (SFW), seductive gaze. Photorealistic, 8k, shot on Fujifilm Pro 400H, 85mm lens, f/1.8. NOT illustration.`;
+      addLog("Fotografando capa (Lumière Aesthetic)...");
+      // UPDATED PROMPT: Cinematic, Grainy, Flash, Editorial
+      const basePrompt = `Portrait of a woman (${inputs.details}). 
+      Style: High-fashion editorial, shot on Kodak Portra 400, 35mm film grain, flash photography, direct flash, high contrast, glamorous, chic, cinematic lighting. 
+      Vibe: 'Old Money' meets 'Femme Fatale', elegant but provocative (Safe for Work).
+      Feature: Sharp focus on eyes, skin texture, pores visible. NOT illustration.`;
+      
       const coverResult = await ai.models.generateContent({ model: "gemini-2.5-flash-image", contents: basePrompt });
       const extractImage = (res: any) => res.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData)?.inlineData?.data;
       const coverBase64 = extractImage(coverResult);
@@ -488,32 +629,24 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => void; onDelete: (
       addLog("Produzindo editorial variado (7 fotos)...");
       const galleryImages = [coverImage];
       const allScenarios = [
-          // Intimate / Home / Morning (Spicy)
-          "Wearing a silk robe slightly open, sitting on a messy bed in a luxury hotel room, morning light, seductive smile",
-          "Lying on white sheets, wearing lace lingerie (SFW), looking at camera, soft focus, intimate atmosphere",
-          "Sitting on a velvet sofa, wearing an oversized shirt and nothing else visible, holding a wine glass, flirty look",
-          "Standing in a marble bathroom, wearing a towel turban and a silk slip dress, applying lipstick in mirror",
-          "Waking up, stretching in bed, wearing sheer pajamas (SFW), golden hour light hitting skin",
-
-          // Social / Nightlife / Dining (Glamour)
-          "Wearing a red backless evening gown, looking back over shoulder, rooftop bar at night, city lights",
-          "Sitting at a fine dining restaurant, candlelight, wearing a black dress with deep neckline, holding a martini",
-          "Dancing in a VIP booth, wearing a sequin mini dress, blurred lights, energetic and fun",
-          "Inside a luxury limousine, wearing a faux fur coat over a cocktail dress, laughing, holding champagne",
-
-          // Outdoor / Travel / Luxury (Lifestyle)
-          "Wearing a bikini (SFW), walking out of the ocean at sunset, wet hair, golden hour, Bond Girl vibe",
-          "Lounging on a yacht deck, wearing a white linen shirt unbuttoned over swimwear, sunglasses, blue ocean",
-          "Driving a vintage convertible, wearing a headscarf and sunglasses, wind in hair, cinematic style",
-          "Relaxing by an infinity pool, wearing a wide-brimmed hat and swimsuit, sipping a cocktail",
-          "Walking in a city street, wearing a trench coat, confident strut, paparazzi style shot"
+          "Sitting in a dark mahogany office, wearing a silk blouse, holding a fountain pen, looking intensely at camera, cinematic lighting",
+          "Backseat of a Rolls Royce at night, wearing a fur coat (faux), city lights reflecting on window, flash photography",
+          "Walking down a marble staircase in an evening gown, looking back, paparazzi style flash, motion blur",
+          "Lounging on a velvet sofa in a penthouse, wearing a slip dress, holding a glass of whiskey, moody lighting",
+          "Close up portrait applying red lipstick in a mirror, backstage vibe, grainy film look",
+          "Standing on a windy balcony overlooking the ocean, wearing a white linen suit, golden hour sun flare",
+          "Dining at a Michelin star restaurant, candlelight, wearing diamonds, laughing, candid shot",
+          "Getting out of a private jet, wearing sunglasses and a scarf, confident posture, sunny day"
       ];
-      // Pick 7 random scenarios
       const selectedScenarios = allScenarios.sort(() => 0.5 - Math.random()).slice(0, 7);
 
       for (const scenario of selectedScenarios) {
         addLog(`Capturando: ${scenario.substring(0, 30)}...`);
-        const galleryPrompt = `Photo of the SAME woman (${inputs.details}). Scene: ${scenario}. Style: Raw candid, grainy film look, real skin texture, hyper realistic. NOT illustration, NOT nude, but spicy/seductive.`;
+        const galleryPrompt = `Photo of the SAME woman (${inputs.details}). 
+        Scene: ${scenario}. 
+        Style: High-fashion editorial, shot on Kodak Portra 400, 35mm film grain, flash photography. 
+        Quality: Photorealistic, 8k, raw file.`;
+        
         const res = await ai.models.generateContent({ model: "gemini-2.5-flash-image", contents: galleryPrompt });
         const imgBase64 = extractImage(res);
         if (imgBase64) galleryImages.push(`data:image/png;base64,${imgBase64}`);
@@ -560,36 +693,37 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => void; onDelete: (
       <div className="container mx-auto max-w-4xl">
         <h2 className="text-4xl text-white font-serif mb-8 flex items-center gap-4"><LayoutDashboard className="text-yellow-600" /> Painel de Criação</h2>
         
-        {/* INSTRUCTIONS BOX */}
-        <div className="bg-yellow-900/10 border border-yellow-600/30 p-6 rounded-lg mb-8">
-           <h3 className="text-yellow-500 font-bold uppercase tracking-widest text-sm mb-3 flex items-center gap-2"><Github size={16} /> Nova Estrutura de Pastas (Split Database)</h3>
-           <div className="flex flex-col md:flex-row gap-8">
-              <div className="flex-1">
-                 <p className="text-sm text-gray-300 mb-2">Para otimizar o carregamento, agora salvamos um arquivo por modelo.</p>
-                 <ol className="list-decimal list-inside text-sm text-gray-400 space-y-2 font-mono">
-                    <li>Crie uma pasta chamada <span className="text-white font-bold">database</span> no seu GitHub.</li>
-                    <li>Baixe o <span className="text-white font-bold">JSON Individual</span> de cada modelo.</li>
-                    <li>Faça upload deles para dentro da pasta <span className="text-yellow-500">database/</span>.</li>
-                    <li>Por fim, baixe o <span className="text-white font-bold">Arquivo de Índice</span> e coloque na raiz (junto com index.html).</li>
-                 </ol>
-              </div>
-              <div className="flex-1 bg-black/50 p-4 rounded border border-white/5 font-mono text-xs text-gray-500">
-                <p>root/</p>
-                <p className="pl-4">├── index.html</p>
-                <p className="pl-4 text-yellow-500">├── db_index.json (Lista de IDs)</p>
-                <p className="pl-4">└── <span className="text-yellow-500">database/</span></p>
-                <p className="pl-8 text-yellow-500">├── 170933.json</p>
-                <p className="pl-8 text-yellow-500">└── 170934.json</p>
-              </div>
+        {/* SETTINGS BOX */}
+        <div className="bg-gray-900 border border-white/10 p-6 rounded-lg mb-8">
+           <div className="flex justify-between items-center mb-4">
+              <h3 className="text-white font-bold uppercase tracking-widest text-sm flex items-center gap-2"><Settings size={16} /> Configuração de Publicação Automática (CMS)</h3>
+              <button onClick={() => setShowConfig(!showConfig)} className="text-yellow-600 text-xs hover:underline">{showConfig ? 'Fechar Configurações' : 'Editar Configurações'}</button>
            </div>
+           
+           {showConfig && (
+             <div className="bg-black/50 p-6 rounded border border-white/10 animate-fade-in">
+                <p className="text-gray-400 text-xs mb-4">Para publicar diretamente no seu site hospedado, preencha os dados do GitHub abaixo. O token precisa de permissão 'repo' completa.</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                   <input placeholder="Usuário GitHub (ex: seu-nome)" value={ghConfig.owner} onChange={e => setGhConfig({...ghConfig, owner: e.target.value})} className="bg-black border border-white/20 p-3 text-white text-sm" />
+                   <input placeholder="Nome do Repositório (ex: lumiere-app)" value={ghConfig.repo} onChange={e => setGhConfig({...ghConfig, repo: e.target.value})} className="bg-black border border-white/20 p-3 text-white text-sm" />
+                   <input placeholder="Personal Access Token (ghp_...)" value={ghConfig.token} onChange={e => setGhConfig({...ghConfig, token: e.target.value})} className="bg-black border border-white/20 p-3 text-white text-sm md:col-span-2" type="password" />
+                </div>
+                <button onClick={saveGhConfig} className="bg-yellow-600 text-black px-4 py-2 font-bold text-sm rounded hover:bg-yellow-500">Salvar Conexão</button>
+             </div>
+           )}
+
+           {!ghConfig.token && !showConfig && (
+              <div className="flex items-center gap-2 text-yellow-600 text-xs bg-yellow-900/10 p-2 rounded">
+                <AlertCircle size={14} />
+                <span>Configure o GitHub acima para publicar automaticamente sem baixar arquivos.</span>
+              </div>
+           )}
         </div>
 
         <div className="bg-gray-900 p-6 rounded-lg border border-white/10 mb-12 flex flex-wrap gap-4 items-center justify-between">
            <div><h3 className="text-white font-bold uppercase tracking-widest text-sm mb-1">Gerenciamento de Dados</h3><p className="text-gray-500 text-xs">Total: {muses.length} modelos</p></div>
            <div className="flex gap-4">
-              <button onClick={handleDownloadIndex} className="flex items-center gap-2 px-6 py-3 bg-white text-black hover:bg-yellow-500 transition-colors text-sm font-bold uppercase tracking-wide rounded-sm shadow-lg"><Database size={18} /> Baixar Índice (db_index.json)</button>
-              {/* Fallback to bulk if needed, keeping it hidden or secondary */}
-              {/* <button onClick={onExport} className="text-gray-500 text-xs hover:text-white">Backup Completo</button> */}
+              <button onClick={handleDownloadIndex} className="flex items-center gap-2 px-6 py-3 bg-white text-black hover:bg-yellow-500 transition-colors text-sm font-bold uppercase tracking-wide rounded-sm shadow-lg"><Database size={18} /> Baixar Índice Manual</button>
            </div>
         </div>
 
@@ -614,7 +748,19 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => void; onDelete: (
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                   <button onClick={() => handleDownloadSingle(muse)} className="flex items-center gap-2 px-3 py-2 bg-black border border-white/20 text-white hover:text-yellow-500 hover:border-yellow-500 transition-colors text-xs font-bold uppercase tracking-wide rounded"><FileJson size={14} /> JSON</button>
+                   {/* ACTION BUTTONS */}
+                   {ghConfig.token ? (
+                      <button 
+                        onClick={() => publishToGitHub(muse)} 
+                        disabled={publishing === muse.id}
+                        className={`flex items-center gap-2 px-3 py-2 border transition-colors text-xs font-bold uppercase tracking-wide rounded ${publishing === muse.id ? 'bg-yellow-600 border-yellow-600 text-black' : 'bg-green-900/30 border-green-600 text-green-500 hover:bg-green-600 hover:text-white'}`}
+                      >
+                        {publishing === muse.id ? <Loader2 className="animate-spin" size={14}/> : <CloudUpload size={14} />} 
+                        {publishing === muse.id ? 'Enviando...' : 'Publicar'}
+                      </button>
+                   ) : (
+                      <button onClick={() => handleDownloadSingle(muse)} className="flex items-center gap-2 px-3 py-2 bg-black border border-white/20 text-white hover:text-yellow-500 hover:border-yellow-500 transition-colors text-xs font-bold uppercase tracking-wide rounded"><FileJson size={14} /> JSON</button>
+                   )}
                    <button onClick={() => onDelete(muse.id)} className="text-gray-600 hover:text-red-500 p-2 transition-colors"><Trash2 size={18} /></button>
                 </div>
              </div>
@@ -735,7 +881,7 @@ const App: React.FC = () => {
 
   // Save to LocalStorage whenever state changes (keeps drafts safe)
   useEffect(() => {
-    if (!loading) saveToLocalStorage(muses);
+    if (!loading) saveToLocalStorage(STORAGE_KEY, muses);
   }, [muses, loading]);
 
   const handleCreateMuse = (newMuse: MuseProfile) => setMuses(prev => [newMuse, ...prev]);
