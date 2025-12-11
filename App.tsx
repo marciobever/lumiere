@@ -38,13 +38,19 @@ import {
   Settings,
   AlertCircle,
   Globe2,
-  HardDrive
+  HardDrive,
+  MessageCircle,
+  Smartphone,
+  Heart
 } from 'lucide-react';
 import { MuseProfile, ViewState, DashboardInputs } from './types';
 
 // --- CONFIGURATION ---
 // IMPORTANTE: Substitua pelo seu ID de Publicador do AdSense
 const ADSENSE_PUB_ID = "ca-pub-0000000000000000"; 
+// URL RAW DO SEU REPOSITÓRIO GITHUB (Para o site ler os arquivos que você sobe)
+// Se você mudou o repositório no painel, você DEVE alterar esta linha para o seu usuário/repo
+const GITHUB_RAW_BASE = "https://raw.githubusercontent.com/marciobever/lumiere/main";
 
 // --- INITIAL DATA & STORAGE ---
 const INITIAL_MUSES: MuseProfile[] = [];
@@ -148,20 +154,45 @@ const cleanAndParseJSON = (text: string) => {
 // --- HELPER: Delay for Rate Limiting ---
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// --- REMOTE DATA FETCHING (NEW) ---
+// --- REMOTE DATA FETCHING (UPDATED FOR GITHUB RAW) ---
 const fetchRemoteMuses = async (): Promise<MuseProfile[]> => {
   try {
-    // 1. Fetch the Index File (with cache busting)
-    const indexResponse = await fetch(`/${DB_INDEX_FILENAME}?t=${Date.now()}`);
-    if (!indexResponse.ok) return [];
+    // LÓGICA DE CORREÇÃO:
+    // Tenta usar a configuração do Admin salva no LocalStorage para montar a URL correta.
+    // Isso garante que se você configurou seu repo pessoal no painel, o site (no seu navegador) vai ler de lá,
+    // ignorando a constante hardcoded que pode estar errada.
+    let baseUrl = GITHUB_RAW_BASE;
+    
+    try {
+        const savedConfig = localStorage.getItem(GITHUB_CONFIG_KEY);
+        if (savedConfig) {
+            const { owner, repo, branch } = JSON.parse(savedConfig);
+            if (owner && repo) {
+                baseUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch || 'main'}`;
+                console.log("Using Admin Config for URL:", baseUrl);
+            }
+        }
+    } catch (e) { console.warn("Could not load admin config for URL override"); }
+
+    // 1. Fetch the Index File from GitHub Raw with Cache Busting
+    const indexUrl = `${baseUrl}/${DB_INDEX_FILENAME}?t=${Date.now()}`;
+    console.log("Fetching index:", indexUrl);
+    
+    const indexResponse = await fetch(indexUrl);
+    if (!indexResponse.ok) {
+        console.warn(`Index not found on GitHub yet (Status ${indexResponse.status}). Verifique se o repo é Público.`);
+        return [];
+    }
     
     const ids: string[] = await indexResponse.json();
     if (!Array.isArray(ids) || ids.length === 0) return [];
 
-    // 2. Fetch each profile JSON in parallel
+    // 2. Fetch each profile JSON in parallel from GitHub Raw
     const profilePromises = ids.map(async (id) => {
       try {
-        const res = await fetch(`/${DB_FOLDER}/${id}.json`);
+        // Cache busting também nos arquivos individuais
+        const profileUrl = `${baseUrl}/${DB_FOLDER}/${id}.json?t=${Date.now()}`;
+        const res = await fetch(profileUrl);
         if (!res.ok) return null;
         const data = await res.json();
         // Mark as remote so UI shows "Published"
@@ -240,6 +271,40 @@ const SmartAdUnit: React.FC<{ slotId: string; format: 'auto' | 'fluid' | 'rectan
              data-ad-format={format === 'fluid' ? 'fluid' : 'auto'}
              data-ad-layout={format === 'fluid' ? 'in-article' : undefined}
              data-full-width-responsive="true"></ins>
+      </div>
+    </div>
+  );
+};
+
+// --- FAKE INTERACTION BANNER (RETENTION LOOP) ---
+const InteractionBanner: React.FC<{ name: string; type: 'whatsapp' | 'vip'; onNext: () => void }> = ({ name, type, onNext }) => {
+  if (type === 'whatsapp') {
+    return (
+      <div onClick={onNext} className="cursor-pointer my-12 mx-auto max-w-2xl transform hover:scale-[1.02] transition-all duration-300">
+        <div className="bg-[#128C7E]/10 border border-[#128C7E] rounded-xl p-4 flex items-center justify-between shadow-[0_0_20px_rgba(18,140,126,0.2)]">
+           <div className="flex items-center gap-4">
+              <div className="bg-[#128C7E] p-3 rounded-full text-white animate-pulse">
+                 <MessageCircle size={24} />
+              </div>
+              <div>
+                 <h4 className="text-[#128C7E] font-bold text-lg leading-tight">Fale com {name} agora</h4>
+                 <p className="text-gray-400 text-xs flex items-center gap-1"><span className="w-2 h-2 bg-green-500 rounded-full"></span> Online • Responde em 2 min</p>
+              </div>
+           </div>
+           <ArrowRight className="text-[#128C7E]" />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div onClick={onNext} className="cursor-pointer my-12 mx-auto max-w-2xl transform hover:scale-[1.02] transition-all duration-300">
+      <div className="bg-gradient-to-r from-red-900/20 to-pink-900/20 border border-red-500/30 rounded-xl p-6 flex flex-col items-center justify-center text-center shadow-[0_0_20px_rgba(239,68,68,0.2)] relative overflow-hidden">
+         <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10"></div>
+         <h4 className="text-red-400 font-bold uppercase tracking-[0.2em] text-sm mb-2 relative z-10 flex items-center gap-2"><Lock size={14} /> Acesso Privado</h4>
+         <h3 className="text-white font-serif text-2xl mb-1 relative z-10">Ver conteúdo sem censura</h3>
+         <p className="text-gray-400 text-sm mb-4 relative z-10">Clique para liberar as fotos íntimas de {name}</p>
+         <button className="bg-red-600 text-white px-6 py-2 rounded-full font-bold text-sm uppercase tracking-wider hover:bg-red-700 transition-colors relative z-10 w-full md:w-auto">Liberar Acesso</button>
       </div>
     </div>
   );
@@ -362,6 +427,17 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
 
   const relatedMuses = allMuses.filter(m => m.id !== profile.id).sort(() => 0.5 - Math.random()).slice(0, 3);
 
+  // LOOP INFINITO: Pega um perfil aleatório DIFERENTE do atual
+  const handleRandomNext = () => {
+     const others = allMuses.filter(m => m.id !== profile.id);
+     if (others.length > 0) {
+        const random = others[Math.floor(Math.random() * others.length)];
+        onSelectProfile(random);
+     } else {
+        alert("Mais musas chegando em breve.");
+     }
+  };
+
   return (
     <div className="bg-[#050505] min-h-screen animate-fade-in pb-32">
       <div className="fixed top-28 left-8 z-40 hidden md:block">
@@ -392,11 +468,17 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
             
             <div className="prose prose-invert prose-lg max-w-none">
               <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 first-letter:text-7xl first-letter:font-serif first-letter:text-yellow-600 first-letter:float-left first-letter:mr-4 first-letter:mt-[-8px] mb-12 font-light tracking-wide">{profile.content.bodyParagraphs[0]}</p>
+              
               <SmartAdUnit slotId="1624191321" format="auto" className="w-full max-w-4xl mx-auto" />
+              
               <div className="my-16 relative group overflow-hidden shadow-2xl border border-white/5">
                 <OptimizedImage src={profile.images[0]} className="w-full h-[400px] md:h-[800px] object-cover transition-transform duration-1000 group-hover:scale-105" alt="Editorial 1" />
               </div>
               <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-12 tracking-wide font-light">{profile.content.bodyParagraphs[1]}</p>
+              
+              {/* --- BANNER DE RETENÇÃO 1 (WHATSAPP) --- */}
+              <InteractionBanner name={profile.name} type="whatsapp" onNext={handleRandomNext} />
+
               <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-16 tracking-wide font-light">{profile.content.bodyParagraphs[2]}</p>
               
               <div className="my-20 p-6 md:p-10 bg-gradient-to-r from-yellow-900/20 to-black border border-yellow-600/30 rounded-lg relative overflow-hidden">
@@ -421,6 +503,9 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
               <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-12 tracking-wide font-light">{profile.content.bodyParagraphs[3]}</p>
               <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-12 tracking-wide font-light">{profile.content.bodyParagraphs[4]}</p>
               
+              {/* --- BANNER DE RETENÇÃO 2 (VIP) --- */}
+              <InteractionBanner name={profile.name} type="vip" onNext={handleRandomNext} />
+
               <SmartAdUnit slotId="1006896613" format="auto" className="w-full max-w-[336px] mx-auto" />
 
               <div className="my-24 border-l-4 border-white pl-8 md:pl-12 py-4">
@@ -613,72 +698,103 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
 
   const generateRandomPersona = async () => {
     setLoading(true);
-    addLog("Ativando Gerador Genético de Diversidade...");
-    const ethnicities = ["Scandinavian", "Afro-Caribbean", "Japanese", "Brazilian Mixed", "Indian", "Mediterranean", "Eastern European", "Middle Eastern"];
-    const hairStyles = ["Platinum Blonde Bob", "Long Jet Black waves", "Redhead copper curls", "Honey Brown straight", "Silver/Grey sleek", "Natural Afro", "Braided elaborate", "Pink-tinted balayage"];
-    const distinctFeatures = ["freckles", "distinct mole", "heterochromia eyes", "sharp jawline", "dimples", "bushy eyebrows", "piercing blue eyes"];
+    addLog("Ativando Gerador Genético de 'Musas'...");
+    
+    // --- GENETICS UPGRADE (MORE VARIETY) ---
+    const ethnicities = [
+       "Brazilian Mixed (Morena)", "Japanese-Brazilian", "Afro-Brazilian", "Scandinavian (Blonde)", 
+       "Italian (Mediterranean)", "Korean", "Colombian", "Russian", "Indian", "Persian", "Dominican", "Native American"
+    ];
+    const bodyTypes = [
+       "Slim & Toned", "Curvy Hourglass (Kim K style)", "Athletic & Muscular (Crossfit)", "Tall & Slender (Runway)", "Voluminous & Soft"
+    ];
+    const vibes = [
+       "Tattooed Alternative Baddie", "Elegant Old Money", "Beach Bunny / Surfer", "High-Fashion Edgy", 
+       "Gym Rat Fitness", "Boho Chic", "Minimalist aesthetic", "Streetwear Hypebae", "Business Siren"
+    ];
+    const hairStyles = [
+       "Long dark straight hair", "Platinum blonde bob", "Redhead beach waves", "Box braids", "Short pixie cut", 
+       "Curly afro", "Pink pastel hair", "Jet black bangs", "Honey highlights blowout"
+    ];
+    const distinctFeatures = [
+        "freckles across nose", "full pouty lips", "piercing green eyes", "sharp jawline", "dimples", "septum piercing", "lots of tattoos", "gap teeth", "heterochromia"
+    ];
+    
     const randomEthnicity = ethnicities[Math.floor(Math.random() * ethnicities.length)];
+    const randomBody = bodyTypes[Math.floor(Math.random() * bodyTypes.length)];
+    const randomVibe = vibes[Math.floor(Math.random() * vibes.length)];
     const randomHair = hairStyles[Math.floor(Math.random() * hairStyles.length)];
     const randomFeature = distinctFeatures[Math.floor(Math.random() * distinctFeatures.length)];
-    const physicalPrompt = `Beautiful Woman of ${randomEthnicity} descent, featuring ${randomHair} and ${randomFeature}. Luxury high-fashion model look, fit physique, elegant posture.`;
+    const randomAge = Math.floor(Math.random() * (26 - 19 + 1)) + 19; // 19 to 26
+
+    const physicalPrompt = `Stunning woman, ${randomAge} years old. 
+    Ethnicity: ${randomEthnicity}. 
+    Body Type: ${randomBody}.
+    Hair: ${randomHair}.
+    Distinguishing Feature: ${randomFeature}.
+    Style/Vibe: ${randomVibe}.
+    Overall: Highly attractive, confident, photogenic.`;
 
     try {
       const ai = new GoogleGenAI({ apiKey: getApiKey() });
-      const prompt = `Generate a JSON profile for a High-End Luxury Consultant or Model. 
-      The Name must be culturally appropriate for: ${randomEthnicity}.
-      The Niche must be a High CPM topic.
-      Output JSON ONLY: {"name": "Elegant Name", "niche": "High Ticket Niche", "details": "${physicalPrompt}"}`;
+      const prompt = `Generate a JSON profile for a Social Media Model (${randomVibe}).
+      The Name must fit her ethnicity: ${randomEthnicity}.
+      The Niche must be High CPM (Finance, Tech, Travel) but she is a 'Muse' for it.
+      Output JSON ONLY: {"name": "Name", "niche": "Niche", "details": "${physicalPrompt}"}`;
       
       const result = await ai.models.generateContent({ model: "gemini-2.5-flash", contents: prompt, config: { responseMimeType: "application/json" } });
       const data = cleanAndParseJSON(result.text || "{}");
       setInputs({ name: data.name, niche: data.niche, details: physicalPrompt });
-      addLog(`Persona: ${data.name} - ${data.niche}`);
+      addLog(`DNA Gerado: ${data.name} | ${randomVibe} | ${randomBody}`);
     } catch (error) { 
       console.error(error); 
-      setInputs({ name: "Sofia", niche: "Luxury", details: physicalPrompt }); 
+      setInputs({ name: "Bella", niche: "Luxury Travel", details: physicalPrompt }); 
       addLog("IA ocupada, usando dados padrão.");
     } finally { setLoading(false); }
   };
 
   const handleGenerate = async () => {
     if (!inputs.niche || !inputs.name || !inputs.details) { addLog("Erro: Preencha todos os campos."); return; }
-    setLoading(true); setLogs([]); addLog("Iniciando processo de criação High-Ticket...");
+    setLoading(true); setLogs([]); addLog("Iniciando sessão de fotos...");
 
     try {
       const ai = new GoogleGenAI({ apiKey: getApiKey() });
-      addLog("Escrevendo artigo de 6 parágrafos + FAQ...");
+      addLog("Criando conteúdo provocante e inteligente...");
       
-      const textPrompt = `You are the Editor-in-Chief of a high-end luxury lifestyle & business magazine.
-      Create a JSON profile for "${inputs.name}", an elite consultant in "${inputs.niche}".
+      const textPrompt = `You are a writer for a high-end men's lifestyle magazine (like GQ meets Playboy - classy but sexy).
+      Create a JSON profile for "${inputs.name}", a stunning model who is also an expert in "${inputs.niche}".
       Language: PT-BR (Portuguese).
+      Tone: Seductive, intelligent, provocative, captivating. Use words that appeal to male desire but keep it adsense safe.
       FORMAT: PLAIN JSON ONLY. NO Markdown.
       Schema:
       {
-        "tagline": "Elegant & catchy one-liner",
-        "title": "A sophisticated, high-CTR headline about ${inputs.niche}",
-        "intro": "A captivating introduction blending her beauty with her intellect",
+        "tagline": "A short, sexy & catchy one-liner",
+        "title": "A headline that combines beauty/sex appeal with the topic ${inputs.niche}",
+        "intro": "A seductive introduction describing her vibe and intelligence",
         "bodyParagraphs": [
-           "Para 1: Deep dive into the market trends of ${inputs.niche} (Technical)",
-           "Para 2: Her personal approach/strategy (Business)",
-           "Para 3: A luxury lifestyle anecdote related to her work (Travel/Dining)",
-           "Para 4: Specific advice for high-net-worth individuals",
-           "Para 5: Future outlook of the industry",
-           "Para 6: A memorable, elegant conclusion"
+           "Para 1: Discussing ${inputs.niche} but relating it to power/desire",
+           "Para 2: Her personal view (intimate tone)",
+           "Para 3: A luxury lifestyle anecdote (Travel/Dining/Parties)",
+           "Para 4: Advice for men who want success",
+           "Para 5: Future trends",
+           "Para 6: A lingering, memorable conclusion"
         ],
-        "keywords": ["5 very high CPM keywords for AdSense"],
-        "expertVerdict": "A quote from Lumière validating her expertise",
-        "faqs": [{"question": "Technical Question 1?", "answer": "Detailed Answer"}, {"question": "Technical Question 2?", "answer": "Detailed Answer"}],
-        "insiderSecret": "A very specific, valuable insider tip about ${inputs.niche}"
+        "keywords": ["5 high CPM keywords"],
+        "expertVerdict": "A quote from Lumière about why she is the ultimate muse",
+        "faqs": [{"question": "Q1 regarding topic", "answer": "Answer"}],
+        "insiderSecret": "A secret tip about the niche"
       }`;
 
       const textResult = await ai.models.generateContent({ model: "gemini-2.5-flash", contents: textPrompt, config: { responseMimeType: "application/json" } });
       const content = cleanAndParseJSON(textResult.text || "{}");
 
-      addLog("Fotografando capa (Lumière Aesthetic)...");
+      addLog("Fotografando capa (Estilo 'Insta Baddie/Muse')...");
+      // PROMPT MAIS SENSUAL / JOVEM
       const basePrompt = `Portrait of a woman (${inputs.details}). 
-      Style: High-fashion editorial, shot on Kodak Portra 400, 35mm film grain, flash photography, direct flash, high contrast, glamorous, chic, cinematic lighting. 
-      Vibe: 'Old Money' meets 'Femme Fatale', elegant but provocative (Safe for Work).
-      Feature: Sharp focus on eyes, skin texture, pores visible. NOT illustration.`;
+      Style: High-end Instagram Model, 8k resolution, raw photo, realistic skin texture (sweat/pores), soft lighting, sultry gaze looking at camera.
+      Makeup: Glamorous, glossy lips. 
+      Vibe: Provocative, confident, 'Baddie' aesthetic, highly attractive, fit body.
+      Clothing: Stylish, revealing but classy (e.g. crop top, silk dress, deep neckline). NO NUDITY. Safe for work but edgy.`;
       
       const coverResult = await ai.models.generateContent({ model: "gemini-2.5-flash-image", contents: basePrompt });
       const extractImage = (res: any) => res.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData)?.inlineData?.data;
@@ -687,20 +803,21 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
       const coverImage = `data:image/png;base64,${coverBase64}`;
 
       // --- THROTTLE (DELAY) 1 ---
-      addLog("Aguardando 12 segundos (Rate Limit Protection)...");
+      addLog("Aguardando 12 segundos...");
       await delay(12000);
 
-      addLog("Produzindo editorial variado (5 fotos)...");
+      addLog("Produzindo editorial 'Musa' (5 fotos)...");
       const galleryImages = [coverImage];
+      // CENÁRIOS MAIS PROVOCANTES
       const allScenarios = [
-          "Sitting in a dark mahogany office, wearing a silk blouse",
-          "Backseat of a Rolls Royce at night, wearing a fur coat (faux)",
-          "Walking down a marble staircase in an evening gown, motion blur",
-          "Lounging on a velvet sofa in a penthouse, slip dress",
-          "Close up portrait applying red lipstick, backstage vibe",
-          "Standing on a windy balcony overlooking the ocean, linen suit",
-          "Dining at a Michelin star restaurant, candlelight",
-          "Getting out of a private jet, sunglasses"
+          "Lounging on a bed in a silk robe, shoulder exposed, messy hair",
+          "By a luxury swimming pool, wet hair, wearing stylish swimwear (bikini)",
+          "In a gym mirror selfie style, wearing tight yoga pants and sports bra, sweat",
+          "Close up on face, biting lip, sultry expression",
+          "Evening wear, backless dress, looking over shoulder, red lipstick",
+          "In a bathtub (bubbles covering key areas), drinking champagne, relaxing",
+          "Sitting on a sports car hood, denim shorts, crop top",
+          "Golden hour sunlight hitting face, glowing skin"
       ];
       const selectedScenarios = allScenarios.sort(() => 0.5 - Math.random()).slice(0, 5);
 
@@ -714,8 +831,8 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
             try {
               const galleryPrompt = `Photo of the SAME woman (${inputs.details}). 
               Scene: ${scenario}. 
-              Style: High-fashion editorial, shot on Kodak Portra 400, 35mm film grain, flash photography. 
-              Quality: Photorealistic, 8k, raw file.`;
+              Style: High-end influencer photography, 4k, realistic, provocative pose.
+              Clothing: Suggestive but safe (swimwear, lingerie-style top, silk).`;
               
               const res = await ai.models.generateContent({ model: "gemini-2.5-flash-image", contents: galleryPrompt });
               const imgBase64 = extractImage(res);
@@ -728,18 +845,17 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
 
             } catch (imgError: any) {
                if (imgError.message?.includes("429") || imgError.message?.includes("RESOURCE_EXHAUSTED") || imgError.message?.includes("Quota")) {
-                 addLog(`Cota excedida. Pausando 25s antes de tentar novamente (Tentativa ${retries+1}/2)...`);
+                 addLog(`Cota excedida. Pausando 25s...`);
                  await delay(25000);
                  retries++;
                } else {
-                 console.warn("Skipping image due to non-quota error:", imgError);
-                 break; // Sai do loop de retry se não for erro de cota
+                 console.warn("Skipping image error:", imgError);
+                 break; 
                }
             }
         }
       }
       
-      // Pad with cover if needed
       while(galleryImages.length < 8) galleryImages.push(coverImage);
 
       const newMuse: MuseProfile = {
@@ -755,7 +871,7 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
       };
 
       await onGenerate(newMuse);
-      addLog("SUCESSO! Perfil High-Ticket criado e salvo no Banco de Dados.");
+      addLog("SUCESSO! Perfil 'Musa' criado.");
       setInputs({ niche: '', name: '', details: '' });
     } catch (err) { console.error(err); addLog(`ERRO FATAL: ${(err as Error).message}`); } finally { setLoading(false); }
   };
