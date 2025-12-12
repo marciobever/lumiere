@@ -8,7 +8,7 @@ import { MuseProfile, ViewState, DashboardInputs } from './types';
 
 // --- CONFIGURATION ---
 const ADSENSE_PUB_ID = "ca-pub-0000000000000000"; 
-const LOCAL_STORAGE_KEY = 'lumiere_muses_backup';
+const LOCAL_STORAGE_KEY = 'lumiere_muses_backup_v2';
 
 // --- N8N CONFIGURATION ---
 const N8N_WEBHOOK_URL = "https://n8n.seureview.com.br/webhook/lumiere"; 
@@ -16,6 +16,7 @@ const N8N_WEBHOOK_URL = "https://n8n.seureview.com.br/webhook/lumiere";
 // --- SUPABASE CONFIGURATION ---
 const SUPABASE_URL = 'https://wdjddlkbudtncskgawgh.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndkamRkbGtidWR0bmNza2dhd2doIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDY3MjEzMDgsImV4cCI6MjA2MjI5NzMwOH0.speHlbECXo_IMbMz3AO10C7ubU72kS1kRJNF5LH_Z0w';
+
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // --- INITIAL DATA ---
@@ -77,7 +78,7 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // --- HELPER: Image Compression ---
 const compressImage = (base64Str: string, quality = 0.8): Promise<string> => {
-  if (base64Str.startsWith('http')) return Promise.resolve(base64Str); // Skip if already a URL
+  if (!base64Str || base64Str.startsWith('http')) return Promise.resolve(base64Str || ''); 
   return new Promise((resolve) => {
     const img = new Image();
     img.src = base64Str;
@@ -101,6 +102,7 @@ const compressImage = (base64Str: string, quality = 0.8): Promise<string> => {
 
 // --- OPTIMIZED IMAGE COMPONENT ---
 const OptimizedImage: React.FC<{ src: string; alt: string; className?: string; priority?: boolean; }> = ({ src, alt, className, priority = false }) => {
+  if (!src) return <div className={`bg-gray-900 ${className}`}></div>;
   return (
     <img
       src={src}
@@ -110,6 +112,10 @@ const OptimizedImage: React.FC<{ src: string; alt: string; className?: string; p
       decoding="async"
       // @ts-ignore
       fetchPriority={priority ? "high" : "auto"}
+      onError={(e) => {
+          // Silent fallback or placeholder could go here
+          (e.target as HTMLImageElement).style.opacity = '0.5';
+      }}
     />
   );
 };
@@ -283,7 +289,7 @@ const Hero: React.FC = () => {
       </div>
       <div className="absolute left-0 right-0 bottom-0 flex flex-col items-center justify-end pb-20 md:pb-32 max-h-[55vh] pointer-events-none">
         <div className="relative z-10 text-center px-6 max-w-6xl mx-auto pointer-events-auto">
-          <h1 className="font-serif text-5xl md:text-7xl lg:text-8xl text-white mb-10 leading-none tracking-tight drop-shadow-2xl">THE MUSE <br/> <span className="italic text-transparent bg-clip-text bg-gradient-to-r from-yellow-200 via-yellow-500 to-yellow-700">COLLECTIVE</span></h1>
+          <h1 className="font-serif text-5xl md:text-7xl lg:text-8xl text-white mb-10 leading-none tracking-tight drop-shadow-2xl">A COLEÇÃO <br/> <span className="italic text-transparent bg-clip-text bg-gradient-to-r from-yellow-200 via-yellow-500 to-yellow-700">LUMIÈRE</span></h1>
           <p className="text-gray-200 text-lg md:text-2xl font-light max-w-3xl mx-auto mb-16 leading-relaxed tracking-wide drop-shadow-lg font-serif italic opacity-95">"Uma plataforma exclusiva onde a estética refinada encontra a inteligência de mercado de alto nível."</p>
           <button onClick={() => document.getElementById('profiles')?.scrollIntoView({behavior: 'smooth'})} className="animate-bounce mt-4 text-white/50 hover:text-yellow-600 transition-colors cursor-pointer"><ChevronDown size={40} strokeWidth={1} /></button>
         </div>
@@ -294,20 +300,32 @@ const Hero: React.FC = () => {
 
 // --- PROFILE PAGE ---
 const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onSelectProfile: (p: MuseProfile) => void; onBack: () => void }> = ({ profile, allMuses, onSelectProfile, onBack }) => {
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+
   useEffect(() => { 
     window.scrollTo(0, 0); 
     // Update SEO dynamically for social sharing
+    const seoDescription = profile.intro || `Conheça ${profile.name}, especialista em ${profile.niche}.`;
+    const seoKeywords = profile.keywords ? ` | ${profile.keywords.slice(0, 5).join(', ')}` : '';
+    
     updateMetaTags(
         `${profile.name} | Lumière Collective`,
-        profile.intro || `Conheça ${profile.name}, especialista em ${profile.niche}.`,
+        seoDescription + seoKeywords,
         profile.cover_url
     );
   }, [profile]);
 
   const relatedMuses = allMuses.filter(m => m.id !== profile.id).sort(() => 0.5 - Math.random()).slice(0, 3);
   
-  // Split body string into paragraphs for layout
-  const paragraphs = profile.body ? profile.body.split('\n').filter(p => p.trim().length > 0) : ["Conteúdo indisponível."];
+  // Split body string into paragraphs for layout preservation (Ads/Images logic)
+  const paragraphs = profile.body && profile.body.length > 50 
+    ? profile.body.split('\n').filter(p => p.trim().length > 0) 
+    : [
+        profile.intro || "Perfil exclusivo da Lumière.",
+        `Especialista em ${profile.niche}, ${profile.name} traz uma visão única para o mercado.`,
+        "Sua trajetória é marcada por inovação e uma estética impecável, redefinindo os padrões de influência digital.",
+        "Em breve, traremos uma análise editorial completa sobre suas estratégias e impacto no cenário global."
+      ];
 
   const handleRandomNext = () => {
      const others = allMuses.filter(m => m.id !== profile.id);
@@ -326,6 +344,27 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
           <ArrowLeft size={18} /> <span className="text-xs font-bold uppercase tracking-widest hidden group-hover:inline">Voltar</span>
         </button>
       </div>
+
+       {/* LIGHTBOX / IMAGE ZOOM */}
+       {selectedImage && (
+        <div 
+          className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-300 cursor-zoom-out"
+          onClick={() => setSelectedImage(null)}
+        >
+          <button 
+            onClick={() => setSelectedImage(null)}
+            className="absolute top-6 right-6 text-gray-400 hover:text-white transition-colors z-50 p-2 bg-black/50 rounded-full border border-white/10"
+          >
+            <X size={32} />
+          </button>
+          <img 
+            src={selectedImage} 
+            alt="Zoom" 
+            className="max-w-full max-h-[90vh] object-contain shadow-2xl border border-white/10 rounded-sm cursor-default"
+            onClick={(e) => e.stopPropagation()} 
+          />
+        </div>
+      )}
 
       <div className="relative h-[95vh] w-full overflow-hidden">
         <OptimizedImage src={profile.cover_url} className="w-full h-full object-cover object-center" alt={profile.name} priority={true} />
@@ -348,31 +387,36 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
           <div className="flex flex-col gap-12">
             <div className="prose prose-invert prose-lg max-w-none">
               
-              {/* Paragraph 0 */}
+              {/* Layout Block 1: Paragraph 1 */}
               {paragraphs[0] && (
                  <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 first-letter:text-7xl first-letter:font-serif first-letter:text-yellow-600 first-letter:float-left first-letter:mr-4 first-letter:mt-[-8px] mb-12 font-light tracking-wide">{paragraphs[0]}</p>
               )}
               
               <SmartAdUnit slotId="1624191321" format="auto" className="w-full max-w-4xl mx-auto" />
               
+              {/* Layout Block 2: Image 1 - CLICKABLE */}
               {profile.gallery_urls[0] && (
-                <div className="my-16 relative group overflow-hidden shadow-2xl border border-white/5">
+                <div 
+                  className="my-16 relative group overflow-hidden shadow-2xl border border-white/5 cursor-zoom-in"
+                  onClick={() => setSelectedImage(profile.gallery_urls[0])}
+                >
                   <OptimizedImage src={profile.gallery_urls[0]} className="w-full h-[400px] md:h-[800px] object-cover transition-transform duration-1000 group-hover:scale-105" alt="Editorial 1" />
                 </div>
               )}
 
-              {/* Paragraph 1 */}
+              {/* Layout Block 3: Paragraph 2 */}
               {paragraphs[1] && (
                   <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-12 tracking-wide font-light">{paragraphs[1]}</p>
               )}
               
               <InteractionBanner name={profile.name} type="whatsapp" onNext={handleRandomNext} />
               
-              {/* Paragraph 2 */}
+              {/* Layout Block 4: Paragraph 3 */}
               {paragraphs[2] && (
                   <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-16 tracking-wide font-light">{paragraphs[2]}</p>
               )}
 
+              {/* Layout Block 5: Insider Secret */}
               <div className="my-20 p-6 md:p-10 bg-gradient-to-r from-yellow-900/20 to-black border border-yellow-600/30 rounded-lg relative overflow-hidden">
                  <div className="absolute top-0 right-0 p-4 opacity-10"><Lightbulb size={120} className="text-yellow-600" /></div>
                  <h4 className="text-yellow-500 font-bold uppercase tracking-widest text-sm mb-4 flex items-center gap-2"><Lock size={14} /> Segredo de Mercado</h4>
@@ -385,39 +429,45 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
               
               <SmartAdUnit slotId="6844728415" format="fluid" className="w-full" />
               
+              {/* Layout Block 6: Image Grid - CLICKABLE */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8 my-20">
                  {profile.gallery_urls[1] && (
-                   <div className="h-[400px] md:h-[500px] md:mt-12 shadow-lg border border-white/5">
+                   <div 
+                      className="h-[400px] md:h-[500px] md:mt-12 shadow-lg border border-white/5 cursor-zoom-in"
+                      onClick={() => setSelectedImage(profile.gallery_urls[1])}
+                   >
                       <OptimizedImage src={profile.gallery_urls[1]} className="w-full h-full object-cover grayscale hover:grayscale-0 transition-all duration-1000" alt="Detail 1" />
                    </div>
                  )}
                  {profile.gallery_urls[2] && (
-                   <div className="h-[400px] md:h-[500px] shadow-lg border border-white/5">
+                   <div 
+                      className="h-[400px] md:h-[500px] shadow-lg border border-white/5 cursor-zoom-in"
+                      onClick={() => setSelectedImage(profile.gallery_urls[2])}
+                   >
                       <OptimizedImage src={profile.gallery_urls[2]} className="w-full h-full object-cover grayscale hover:grayscale-0 transition-all duration-1000" alt="Detail 2" />
                    </div>
                  )}
               </div>
               
-              {/* Paragraphs 3 & 4 */}
+              {/* Layout Block 7: Paragraphs 4 & 5 */}
               {paragraphs[3] && <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-12 tracking-wide font-light">{paragraphs[3]}</p>}
               {paragraphs[4] && <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-12 tracking-wide font-light">{paragraphs[4]}</p>}
               
               <InteractionBanner name={profile.name} type="vip" onNext={handleRandomNext} />
               <SmartAdUnit slotId="1006896613" format="auto" className="w-full max-w-[336px] mx-auto" />
               
+              {/* Layout Block 8: Expert Verdict */}
               <div className="my-24 border-l-4 border-white pl-8 md:pl-12 py-4">
                  <h3 className="font-serif text-3xl text-white mb-6">O Veredito da Lumière</h3>
                  <p className="text-xl text-gray-200 italic font-serif leading-relaxed">"{profile.expert_verdict}"</p>
                  <div className="mt-6 flex items-center gap-4">
                     <OptimizedImage src={profile.cover_url} className="w-12 h-12 rounded-full object-cover border border-white/20" alt="Author" />
-                    <div><p className="text-sm text-white font-bold uppercase">{profile.name}</p><p className="text-xs text-gray-500">{profile.niche} Specialist</p></div>
+                    <div><p className="text-sm text-white font-bold uppercase">{profile.name}</p><p className="text-xs text-gray-500">{profile.niche} Especialista</p></div>
                  </div>
               </div>
               
-              {paragraphs[5] && <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-20 tracking-wide font-light">{paragraphs[5]}</p>}
-              
-              {/* If there are more paragraphs, render them here */}
-              {paragraphs.length > 6 && paragraphs.slice(6).map((p, i) => (
+              {/* Remaining Paragraphs */}
+              {paragraphs.length > 5 && paragraphs.slice(5).map((p, i) => (
                    <p key={i} className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-12 tracking-wide font-light">{p}</p>
               ))}
 
@@ -433,7 +483,11 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
             <h3 className="font-serif text-4xl md:text-5xl text-white text-center mb-16">Galeria Exclusiva</h3>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 auto-rows-[250px] md:auto-rows-[300px]">
               {profile.gallery_urls.slice(3, 8).map((img, i) => (
-                <div key={i} className={`relative overflow-hidden group cursor-pointer ${i === 0 || i === 3 ? 'col-span-2 row-span-2' : 'col-span-1 row-span-1'}`}>
+                <div 
+                  key={i} 
+                  className={`relative overflow-hidden group cursor-zoom-in ${i === 0 || i === 3 ? 'col-span-2 row-span-2' : 'col-span-1 row-span-1'}`}
+                  onClick={() => setSelectedImage(img)}
+                >
                   <OptimizedImage src={img} className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-1000 ease-out" alt={`Gallery ${i+3}`} />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col items-center justify-center gap-3">
                      <Maximize2 className="text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]" size={40} />
@@ -496,7 +550,7 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
         const json = JSON.parse(text);
         if (!json.name) throw new Error("JSON inválido: Faltando nome.");
         
-        // Map legacy to new structure if needed
+        // Map legacy or raw JSON to new structure if needed
         const mappedProfile: MuseProfile = {
             id: json.id || Date.now().toString(),
             slug: json.slug || json.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
@@ -550,7 +604,6 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
           };
 
           addLog(`Enviando dados para n8n (${muse.name})...`);
-          console.log("Enviando payload para n8n:", payload);
           
           const response = await fetch(webhookUrl, {
               method: 'POST',
@@ -591,11 +644,16 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
     const randomVibe = vibes[Math.floor(Math.random() * vibes.length)];
     const randomAge = Math.floor(Math.random() * (26 - 19 + 1)) + 19;
 
-    const physicalPrompt = `Stunning woman, ${randomAge} years old. Ethnicity: ${randomEthnicity}. Body Type: ${randomBody}. Style: ${randomVibe}.`;
+    const physicalPrompt = `Stunning WOMAN, ${randomAge} years old. 
+    Ethnicity: ${randomEthnicity}. 
+    Body Type: ${randomBody}.
+    Hair: Styled to match vibe.
+    Style/Vibe: ${randomVibe}.
+    Overall: Highly attractive, confident, photogenic female model.`;
 
     try {
       const ai = new GoogleGenAI({ apiKey: getApiKey() });
-      const prompt = `Generate a JSON profile for a Social Media Model (${randomVibe}). Output JSON ONLY: {"name": "Name", "niche": "High CPM Niche", "details": "${physicalPrompt}"}`;
+      const prompt = `Generate a JSON profile for a Social Media Model (FEMALE WOMAN ${randomVibe}). Output JSON ONLY: {"name": "Female Name", "niche": "High CPM Niche", "details": "${physicalPrompt}"}`;
       
       const result = await ai.models.generateContent({ model: "gemini-2.5-flash", contents: prompt, config: { responseMimeType: "application/json" } });
       const data = cleanAndParseJSON(result.text || "{}");
@@ -614,37 +672,78 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
 
     try {
       const ai = new GoogleGenAI({ apiKey: getApiKey() });
-      addLog("Criando conteúdo...");
-      const textPrompt = `Create a JSON profile for "${inputs.name}", expert in "${inputs.niche}". Language: PT-BR. Tone: Seductive, intelligent. JSON Schema: { "tagline": "", "title": "", "intro": "", "bodyParagraphs": ["p1","p2","p3","p4","p5","p6"], "keywords": [], "expertVerdict": "", "faqs": [{"question":"","answer":""}], "insiderSecret": "" }`;
+      addLog("Criando conteúdo OTIMIZADO (SEO)...");
+      
+      const textPrompt = `Crie um perfil JSON PREMIUM e OTIMIZADO PARA SEO para "${inputs.name}", especialista em "${inputs.niche}".
+      GÊNERO: FEMININO (Sempre trate como mulher/ela/dela).
+      Idioma: PT-BR (Português Brasileiro).
+      Tom: Sedutor, extremamente inteligente, autoridade de mercado, sofisticado.
+      
+      REQUISITOS OBRIGATÓRIOS PARA MONETIZAÇÃO ALTA:
+      1. "intro": Gancho viral, instigante, 150-200 caracteres (Use pronomes femininos).
+      2. "bodyParagraphs": 6 a 8 parágrafos LONGOS e DENSO (100-150 palavras cada). Deve entregar valor real sobre o nicho, contar histórias envolventes e usar termos técnicos de alto valor.
+      3. "expertVerdict": Uma análise profissional de por que ELA é uma autoridade.
+      4. "insiderSecret": Uma dica técnica específica e valiosa (Ouro) sobre ${inputs.niche}.
+      5. "faqs": Gere 6 perguntas complexas com respostas detalhadas (focadas em Long-tail keywords).
+      6. "keywords": 15 palavras-chave de alto CPM (Custo por Mil) relacionadas a ${inputs.niche}.
+      
+      JSON Schema: { "tagline": "", "title": "", "intro": "", "bodyParagraphs": [], "keywords": [], "expertVerdict": "", "faqs": [{"question":"","answer":""}], "insiderSecret": "" }`;
 
       const textResult = await ai.models.generateContent({ model: "gemini-2.5-flash", contents: textPrompt, config: { responseMimeType: "application/json" } });
       const content = cleanAndParseJSON(textResult.text || "{}");
 
       addLog("Fotografando capa...");
-      const basePrompt = `Portrait of a woman (${inputs.details}). Style: High-end Instagram Model, 8k, realistic skin, soft lighting. Clothing: Stylish, revealing but classy.`;
+      // Forcing FEMALE GENDER in image prompt
+      const genderEnforcedDetails = `STUNNING FEMALE WOMAN, LADY, MODEL, ${inputs.details}`;
+      const basePrompt = `Portrait of a stunning WOMAN (${genderEnforcedDetails}). Style: High-end Instagram Model, 8k, realistic skin, soft lighting. Clothing: Stylish, revealing but classy.`;
       
       const coverResult = await ai.models.generateContent({ model: "gemini-2.5-flash-image", contents: basePrompt });
       const coverBase64 = coverResult.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData)?.inlineData?.data;
       if (!coverBase64) throw new Error("Falha na capa");
       const coverImage = `data:image/png;base64,${coverBase64}`;
 
-      await delay(5000); 
-      addLog("Produzindo editorial...");
+      addLog("Produzindo editorial completo (buscando 8 fotos)...");
       
       const galleryImages = [coverImage];
-      const scenarios = ["Lounging on bed", "By luxury pool", "Gym selfie", "Close up face", "Evening wear"];
+      
+      // Lista expandida para garantir variedade e evitar falhas
+      const scenarios = [
+        "Lounging on bed, soft morning light, silk sheets, alluring pose",
+        "By luxury pool, sunny day, holding a cocktail, bikini",
+        "Gym selfie, high-end fitness gear, mirror shot, fit body",
+        "Close up portrait, flawless makeup, intense gaze, 85mm lens",
+        "Evening wear, gala dinner, holding champagne glass, elegant dress",
+        "Working on laptop in modern high-rise office, glasses, professional business woman",
+        "Driving luxury car, leather interior, hands on steering wheel, expensive watch",
+        "Walking in modern city, chic street style, fashion photography",
+        "Relaxing on a private yacht, sea background, wind in hair",
+        "Inside a private jet, drinking coffee, luxury lifestyle"
+      ];
       
       for (const scene of scenarios) {
+          // Aumentado limite para 8 para garantir que a galeria do rodapé tenha imagens
+          if (galleryImages.length >= 8) break;
+
           try {
-             addLog(`Capturando: ${scene}...`);
-             const res = await ai.models.generateContent({ model: "gemini-2.5-flash-image", contents: `Photo of SAME woman (${inputs.details}). Scene: ${scene}. Style: Photorealistic 4k.` });
+             addLog(`Capturando (Aguardando 25s para evitar bloqueio)... ${scene}`);
+             // DELAY DE 25s ANTES DE CADA FOTO DA GALERIA
+             await delay(25000); 
+
+             // Force gender again in loop
+             const loopPrompt = `Photo of SAME WOMAN, FEMALE MODEL (${genderEnforcedDetails}). Scene: ${scene}. Style: Photorealistic 4k, Instagram aesthetic.`;
+             const res = await ai.models.generateContent({ model: "gemini-2.5-flash-image", contents: loopPrompt });
              const img = res.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData)?.inlineData?.data;
-             if(img) galleryImages.push(`data:image/png;base64,${img}`);
-             await delay(4000);
+             if(img) {
+                galleryImages.push(`data:image/png;base64,${img}`);
+             }
           } catch(e) { console.warn("Skip image", e); }
       }
       
-      while(galleryImages.length < 5) galleryImages.push(coverImage); 
+      // Fallback: Se a IA falhar e tivermos poucas fotos, duplicamos para não quebrar o layout
+      while(galleryImages.length < 8) {
+          const randomImg = galleryImages[Math.floor(Math.random() * galleryImages.length)];
+          galleryImages.push(randomImg); 
+      }
 
       // Transform raw AI JSON to flat Database Structure
       const newMuse: MuseProfile = {
@@ -667,7 +766,7 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
         cover_url: coverImage,
         gallery_urls: galleryImages,
         
-        // Extras
+        // Extras (Optional)
         keywords: content.keywords,
         faqs: content.faqs
       };
@@ -768,136 +867,201 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
 
 const App: React.FC = () => {
   const [view, setView] = useState<ViewState>('HOME');
-  const [muses, setMuses] = useState<MuseProfile[]>(INITIAL_MUSES);
   const [selectedProfile, setSelectedProfile] = useState<MuseProfile | null>(null);
-
-  const loadLocalMuses = () => {
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
-      return saved ? JSON.parse(saved) : [];
-    } catch { return []; }
-  };
-
-  const fetchMuses = async () => {
-      // 1. Load Local (Instant)
-      const local = loadLocalMuses();
-      setMuses(local);
-
-      // 2. Load Remote (Async, Read-Only)
-      try {
-        const { data, error } = await supabase.from('muses').select('*').order('created_at', { ascending: false });
-        if (data) {
-            // Data matches new interface directly
-            const remote: MuseProfile[] = data.map((row: any) => ({
-                id: row.id,
-                slug: row.slug,
-                name: row.name,
-                niche: row.niche,
-                tagline: row.tagline,
-                physical_description: row.physical_description,
-                is_remote: true, // Always true for supabase
-                title: row.title,
-                intro: row.intro,
-                body: row.body,
-                expert_verdict: row.expert_verdict,
-                insider_secret: row.insider_secret,
-                cover_url: row.cover_url,
-                gallery_urls: row.gallery_urls || [],
-                // Keywords/Faqs might be null if not in DB schema, handled optionally
-            }));
-            
-            const remoteIds = new Set(remote.map((r) => r.id));
-            const uniqueLocal = local.filter((l: MuseProfile) => !remoteIds.has(l.id));
-            setMuses([...remote, ...uniqueLocal]);
-        }
-      } catch (e) {
-         console.warn("Supabase read error", e);
-      }
-  };
+  const [muses, setMuses] = useState<MuseProfile[]>(INITIAL_MUSES);
 
   useEffect(() => {
-    fetchMuses();
+    // Load local data
+    const localData = localStorage.getItem(LOCAL_STORAGE_KEY);
+    if (localData) {
+      try {
+        const parsed = JSON.parse(localData);
+        if (Array.isArray(parsed)) setMuses(parsed);
+      } catch (e) {
+        console.error("Failed to load local data", e);
+      }
+    }
+
+    // Load Supabase data
+    const loadSupabaseData = async () => {
+      try {
+        const { data, error } = await supabase.from('muses').select('*');
+        if (error) {
+            console.error('Supabase error:', error);
+            return;
+        }
+        if (data) {
+          const remoteMuses: MuseProfile[] = data.map((row: any) => {
+             // Safe JSON parse helper
+             const parse = (val: any) => {
+               if (typeof val === 'string') {
+                 try { return JSON.parse(val); } catch(e) { return val; }
+               }
+               return val;
+             };
+
+             const bodyParas = parse(row.body_paragraphs);
+             const bodyText = Array.isArray(bodyParas) ? bodyParas.join('\n\n') : (row.body || row.intro || '');
+
+             return {
+               id: row.id.toString(),
+               slug: row.slug,
+               name: row.name,
+               niche: row.niche,
+               tagline: row.tagline,
+               physical_description: row.physical_description,
+               title: row.title,
+               intro: row.intro,
+               body: bodyText,
+               expert_verdict: row.expert_verdict,
+               insider_secret: row.insider_secret,
+               cover_url: row.cover_url,
+               gallery_urls: parse(row.gallery_urls) || [],
+               keywords: parse(row.keywords) || [],
+               faqs: parse(row.faqs) || [],
+               is_remote: true
+             };
+          });
+          
+          setMuses(prev => {
+             const remoteIds = new Set(remoteMuses.map(m => m.id));
+             // Keep local ones that are not in remote (unsaved drafts or offline creations)
+             const localOnly = prev.filter(m => !remoteIds.has(m.id));
+             return [...remoteMuses, ...localOnly];
+          });
+        }
+      } catch (e) {
+        console.error('Failed to load from Supabase', e);
+      }
+    };
+    
+    loadSupabaseData();
   }, []);
 
-  const handleGenerate = async (newMuse: MuseProfile) => {
-    // Save to local instantly
-    const updated = [newMuse, ...muses];
-    setMuses(updated);
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated.filter(m => !m.is_remote)));
+  useEffect(() => {
+    try {
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(muses));
+    } catch (e) {
+      console.warn("LocalStorage Quota Exceeded. Unable to save offline backup.", e);
+    }
+  }, [muses]);
+
+  const handleNavigate = (v: ViewState) => {
+    setView(v);
+    if (v === 'HOME') setSelectedProfile(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const saveToN8N = async (muse: MuseProfile) => {
-      // Esta função é chamada pelo Dashboard APÓS o sucesso do fetch.
-      // Ela apenas atualiza o estado local para "is_remote = true"
-      const updatedMuse = { ...muse, is_remote: true };
-      
-      const local = loadLocalMuses().filter((m: MuseProfile) => m.id !== muse.id);
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(local));
-      setMuses(prev => prev.map(m => m.id === muse.id ? updatedMuse : m));
+  const handleProfileSelect = (profile: MuseProfile) => {
+    setSelectedProfile(profile);
+    setView('PROFILE');
+  };
+
+  const handleGenerate = async (muse: MuseProfile) => {
+     setMuses(prev => [muse, ...prev]);
+     setView('DASHBOARD'); 
   };
 
   const handleDelete = async (id: string) => {
-    if (confirm("Excluir este perfil (Local e Banco)?")) {
-      try { await supabase.from('muses').delete().eq('id', id); } catch(e) {}
-      
-      const local = loadLocalMuses().filter((m: MuseProfile) => m.id !== id);
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(local));
-      setMuses(prev => prev.filter(m => m.id !== id));
-    }
+     if (window.confirm('Tem certeza que deseja excluir este perfil?')) {
+        setMuses(prev => prev.filter(m => m.id !== id));
+     }
   };
 
-  const handleSelectProfile = (profile: MuseProfile) => { setSelectedProfile(profile); setView('PROFILE'); };
-  const handleBack = () => { setSelectedProfile(null); setView('HOME'); };
+  const handleSaveToN8N = async (muse: MuseProfile) => {
+     setMuses(prev => prev.map(m => m.id === muse.id ? { ...m, is_remote: true } : m));
+  };
 
   return (
-    <div className="bg-black min-h-screen text-white font-sans selection:bg-yellow-600 selection:text-black">
-       <Navigation onNavigate={setView} currentView={view} />
+    <div className="bg-[#050505] min-h-screen text-gray-200 font-sans selection:bg-yellow-600 selection:text-black">
+       <Navigation onNavigate={handleNavigate} currentView={view} />
+       
        {view === 'HOME' && (
          <>
            <Hero />
-           <div id="profiles" className="bg-[#050505] py-24 px-6 md:px-12 border-t border-white/5">
-              <div className="container mx-auto">
-                 <div className="flex justify-between items-end mb-16">
-                   <div><span className="text-yellow-600 font-bold tracking-widest text-xs uppercase mb-2 block">Nosso Casting</span><h2 className="font-serif text-4xl md:text-6xl text-white">Talentos em Destaque</h2></div>
-                   <div className="hidden md:block w-1/3 h-[1px] bg-white/10"></div>
+           
+           <main id="profiles" className="relative z-10 bg-[#050505]">
+              <div className="container mx-auto px-6 py-24">
+                 <div className="text-center mb-20 animate-fade-in-up">
+                    <span className="text-yellow-600 font-bold uppercase tracking-[0.3em] text-xs mb-4 block">Portfolio Exclusivo</span>
+                    <h2 className="text-4xl md:text-5xl font-serif text-white mb-6">Talentos em Destaque</h2>
+                    <div className="w-24 h-0.5 bg-yellow-600 mx-auto"></div>
                  </div>
-                 {muses.length === 0 ? <div className="grid grid-cols-1 md:grid-cols-3 gap-8"><MuseSkeleton /><MuseSkeleton /><MuseSkeleton /></div> : (
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-x-8 gap-y-16">
-                       {muses.map(muse => (
-                         <div key={muse.id} onClick={() => handleSelectProfile(muse)} className="group cursor-pointer">
-                            <div className="aspect-[3/4] overflow-hidden relative mb-6 border border-white/10 shadow-lg">
-                               <OptimizedImage src={muse.cover_url} className="w-full h-full object-cover transition-transform duration-1000 group-hover:scale-110" alt={muse.name} />
-                               <div className="absolute inset-0 bg-black/20 group-hover:bg-transparent transition-all duration-500"></div>
-                               <div className="absolute top-4 left-4 bg-white/10 backdrop-blur-md border border-white/20 text-white px-3 py-1 text-[10px] font-bold uppercase tracking-widest">{muse.niche}</div>
-                            </div>
-                            <h3 className="font-serif text-3xl text-white mb-2 group-hover:text-yellow-600 transition-colors">{muse.name}</h3>
-                            <p className="text-gray-400 text-sm font-light tracking-wide line-clamp-2">{muse.tagline}</p>
-                         </div>
-                       ))}
-                    </div>
-                 )}
+
+                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-16">
+                    {muses.length === 0 ? (
+                       [1,2,3].map(i => <MuseSkeleton key={i} />)
+                    ) : (
+                       muses.filter(m => m.cover_url).map((muse) => (
+                          <div key={muse.id} onClick={() => handleProfileSelect(muse)} className="group cursor-pointer flex flex-col">
+                             <div className="relative aspect-[3/4] mb-6 overflow-hidden border border-white/5 bg-gray-900 transition-all duration-500 group-hover:border-yellow-600/50 group-hover:shadow-[0_0_30px_rgba(202,138,4,0.15)]">
+                                <OptimizedImage src={muse.cover_url} alt={muse.name} className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-105" />
+                                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-60 group-hover:opacity-40 transition-opacity duration-500"></div>
+                                
+                                <div className="absolute top-4 left-4">
+                                   <span className="bg-black/50 backdrop-blur border border-white/10 text-white text-[10px] font-bold uppercase tracking-widest px-3 py-1">{muse.niche}</span>
+                                </div>
+
+                                <div className="absolute bottom-6 left-6 translate-y-4 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-500">
+                                   <span className="text-white text-xs font-bold uppercase tracking-widest flex items-center gap-2">Ver Perfil <ArrowRight size={14} /></span>
+                                </div>
+                             </div>
+                             <h3 className="text-2xl font-serif text-white mb-1 group-hover:text-yellow-600 transition-colors duration-300">{muse.name}</h3>
+                             <p className="text-sm text-gray-500 font-light line-clamp-1">{muse.tagline || muse.intro.substring(0, 60)}...</p>
+                          </div>
+                       ))
+                    )}
+                 </div>
               </div>
-           </div>
-           <div id="niches" className="py-24 bg-black border-t border-white/5">
-               <div className="container mx-auto px-6 text-center">
-                   <h2 className="font-serif text-4xl text-white mb-12">Áreas de Atuação</h2>
-                   <div className="flex flex-wrap justify-center gap-4">
-                       {Array.from(new Set(muses.map(m => m.niche))).map(niche => (
-                           <span key={niche} className="px-6 py-3 border border-white/20 rounded-full text-gray-300 hover:border-yellow-600 hover:text-yellow-600 transition-all cursor-default uppercase text-xs tracking-widest">{niche}</span>
-                       ))}
-                   </div>
+           </main>
+           
+           <section id="niches" className="py-32 bg-black border-t border-white/5 relative overflow-hidden">
+               <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-5"></div>
+               <div className="container mx-auto px-6 relative z-10">
+                  <div className="text-center mb-16">
+                     <h2 className="text-3xl md:text-4xl font-serif text-white mb-6">Nichos de Alta Performance</h2>
+                     <p className="text-gray-400 max-w-2xl mx-auto font-light">Explore categorias especializadas onde a influência encontra o alto valor de mercado.</p>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                     {["Crypto & Finance", "Luxury Lifestyle", "High-End Tech", "Wellness & Health", "Real Estate", "Fine Dining", "Art & Design", "Executive Business"].map((n, i) => (
+                        <div key={i} className="p-8 border border-white/10 bg-white/5 hover:bg-yellow-600/10 hover:border-yellow-600/30 transition-all duration-300 group cursor-default text-center">
+                           <h4 className="text-sm font-bold uppercase tracking-widest text-gray-300 group-hover:text-yellow-500 transition-colors">{n}</h4>
+                        </div>
+                     ))}
+                  </div>
                </div>
-           </div>
+           </section>
+
+           <footer className="bg-[#020202] py-16 border-t border-white/10">
+              <div className="container mx-auto px-6 text-center">
+                 <div className="text-3xl font-serif font-black text-white tracking-widest mb-6">LUMIÈRE<span className="text-yellow-600">.</span></div>
+                 <div className="flex justify-center gap-8 mb-8 text-xs font-bold uppercase tracking-widest text-gray-500">
+                    <a href="#" className="hover:text-white transition-colors">Sobre</a>
+                    <a href="#" className="hover:text-white transition-colors">Contato</a>
+                    <a href="#" className="hover:text-white transition-colors">Privacidade</a>
+                 </div>
+                 <p className="text-gray-700 text-[10px] uppercase tracking-widest">© 2024 Lumière Collective. All Rights Reserved.</p>
+              </div>
+           </footer>
          </>
        )}
-       {view === 'PROFILE' && selectedProfile && <ProfilePage profile={selectedProfile} allMuses={muses} onSelectProfile={handleSelectProfile} onBack={handleBack} />}
+       
+       {view === 'PROFILE' && selectedProfile && (
+          <ProfilePage 
+             profile={selectedProfile} 
+             allMuses={muses} 
+             onSelectProfile={handleProfileSelect} 
+             onBack={() => setView('HOME')} 
+          />
+       )}
+
        {view === 'DASHBOARD' && (
-           <Dashboard 
-              onGenerate={handleGenerate} 
-              onDelete={handleDelete} 
-              muses={muses} 
-              onSaveToN8N={saveToN8N} 
-           />
+          <Dashboard 
+             onGenerate={handleGenerate} 
+             onDelete={handleDelete} 
+             muses={muses} 
+             onSaveToN8N={handleSaveToN8N}
+          />
        )}
     </div>
   );

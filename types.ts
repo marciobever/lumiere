@@ -4,29 +4,29 @@ export type ViewState = 'HOME' | 'PROFILE' | 'DASHBOARD';
 
 export interface MuseProfile {
   id: string;
-  slug: string; // URL slug
+  slug: string; // URL slug for routing
   name: string;
-  niche: string; // High CPM Niche title
+  niche: string; // High CPM Niche
   tagline: string;
   
-  // Editorial Content
+  // Editorial Content (Flattened structure)
   title: string;
   intro: string;
-  body: string; // Long text string (paragraphs joined)
-  expert_verdict: string; // Summary/Conclusion
-  insider_secret: string; // High CTR Box content
+  body: string; // Long text string (paragraphs joined with \n)
+  expert_verdict: string;
+  insider_secret: string;
   
-  // Physical/AI details
+  // Physical details
   physical_description: string;
   
-  // Images
-  cover_url: string; // Public URL or Base64 (local)
-  gallery_urls: string[]; // Array of Public URLs or Base64 (local)
+  // Images (Supabase Storage or Base64)
+  cover_url: string; 
+  gallery_urls: string[]; // Array of strings
   
   // Metadata
-  is_remote: boolean; // True if from Supabase
+  is_remote: boolean; // True if fetched from Supabase
   
-  // Optional extras (kept for local generation/legacy support if needed)
+  // Extras (Optional, can be extracted from profile_data jsonb if needed)
   keywords?: string[]; 
   faqs?: Array<{ question: string; answer: string }>;
 }
