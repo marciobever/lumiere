@@ -11,13 +11,9 @@ const ADSENSE_PUB_ID = "ca-pub-0000000000000000";
 const LOCAL_STORAGE_KEY = 'lumiere_muses_backup';
 
 // --- N8N CONFIGURATION ---
-// Cole aqui o URL do seu Webhook (Production URL do n8n)
-// O n8n deve esperar um método POST
 const N8N_WEBHOOK_URL = "https://n8n.seureview.com.br/webhook/lumiere"; 
 
-// --- SUPABASE CONFIGURATION (APENAS LEITURA) ---
-// O frontend ainda lê do supabase para mostrar a galeria na Home, 
-// mas a gravação agora é feita exclusivamente pelo n8n.
+// --- SUPABASE CONFIGURATION ---
 const SUPABASE_URL = 'https://wdjddlkbudtncskgawgh.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndkamRkbGtidWR0bmNza2dhd2doIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDY3MjEzMDgsImV4cCI6MjA2MjI5NzMwOH0.speHlbECXo_IMbMz3AO10C7ubU72kS1kRJNF5LH_Z0w';
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -41,7 +37,6 @@ const getApiKey = () => {
 const updateMetaTags = (title: string, description: string, image: string) => {
   document.title = title;
   
-  // Helper to safely set attribute
   const setMeta = (selector: string, attribute: string, value: string) => {
     let element = document.querySelector(selector);
     if (!element) {
@@ -57,13 +52,9 @@ const updateMetaTags = (title: string, description: string, image: string) => {
   };
 
   setMeta('meta[name="description"]', 'content', description);
-  
-  // Open Graph
   setMeta('meta[property="og:title"]', 'content', title);
   setMeta('meta[property="og:description"]', 'content', description);
   setMeta('meta[property="og:image"]', 'content', image);
-  
-  // Twitter
   setMeta('meta[name="twitter:title"]', 'content', title);
   setMeta('meta[name="twitter:description"]', 'content', description);
   setMeta('meta[name="twitter:image"]', 'content', image);
@@ -85,8 +76,8 @@ const cleanAndParseJSON = (text: string) => {
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // --- HELPER: Image Compression ---
-// Converte PNG base64 para JPEG base64 reduzindo drasticamente o tamanho do payload
 const compressImage = (base64Str: string, quality = 0.8): Promise<string> => {
+  if (base64Str.startsWith('http')) return Promise.resolve(base64Str); // Skip if already a URL
   return new Promise((resolve) => {
     const img = new Image();
     img.src = base64Str;
@@ -99,11 +90,9 @@ const compressImage = (base64Str: string, quality = 0.8): Promise<string> => {
         resolve(base64Str);
         return;
       }
-      // Fundo branco para garantir que transparências não fiquem pretas no JPEG
       ctx.fillStyle = '#FFFFFF';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0);
-      // Converte para JPEG com qualidade reduzida
       resolve(canvas.toDataURL('image/jpeg', quality));
     };
     img.onerror = () => resolve(base64Str);
@@ -310,12 +299,15 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
     // Update SEO dynamically for social sharing
     updateMetaTags(
         `${profile.name} | Lumière Collective`,
-        profile.content.intro || `Conheça ${profile.name}, especialista em ${profile.niche}.`,
-        profile.coverImage
+        profile.intro || `Conheça ${profile.name}, especialista em ${profile.niche}.`,
+        profile.cover_url
     );
   }, [profile]);
 
   const relatedMuses = allMuses.filter(m => m.id !== profile.id).sort(() => 0.5 - Math.random()).slice(0, 3);
+  
+  // Split body string into paragraphs for layout
+  const paragraphs = profile.body ? profile.body.split('\n').filter(p => p.trim().length > 0) : ["Conteúdo indisponível."];
 
   const handleRandomNext = () => {
      const others = allMuses.filter(m => m.id !== profile.id);
@@ -336,7 +328,7 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
       </div>
 
       <div className="relative h-[95vh] w-full overflow-hidden">
-        <OptimizedImage src={profile.coverImage} className="w-full h-full object-cover object-center" alt={profile.name} priority={true} />
+        <OptimizedImage src={profile.cover_url} className="w-full h-full object-cover object-center" alt={profile.name} priority={true} />
         <div className="absolute inset-0 bg-gradient-to-t from-[#050505] via-black/40 to-black/30"></div>
         <div className="absolute inset-0 bg-gradient-to-t from-[#050505] via-[#050505]/90 to-transparent opacity-100"></div>
         <div className="absolute left-0 right-0 bottom-0 z-20 flex flex-col justify-end px-6 md:px-12 pb-20 md:pb-32 pointer-events-none max-h-[55vh]">
@@ -345,8 +337,8 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
                <span className="bg-yellow-600 text-black px-4 py-1.5 text-xs font-bold uppercase tracking-widest shadow-[0_0_15px_rgba(202,138,4,0.3)]">{profile.niche}</span>
                <span className="text-gray-300 text-xs uppercase tracking-widest border-l border-gray-500 pl-4 drop-shadow-md">12 min de leitura</span>
             </div>
-            <h1 className="font-serif text-3xl sm:text-4xl md:text-5xl lg:text-7xl text-white mb-6 md:mb-8 leading-[1.1] max-w-5xl shadow-black drop-shadow-2xl tracking-tight animate-fade-in-up delay-100 line-clamp-4">{profile.content.title}</h1>
-            <p className="text-lg md:text-2xl text-gray-100 italic max-w-3xl font-serif md:border-l-4 border-yellow-600 md:pl-8 leading-snug drop-shadow-lg animate-fade-in-up delay-200 line-clamp-3">"{profile.content.intro}"</p>
+            <h1 className="font-serif text-3xl sm:text-4xl md:text-5xl lg:text-7xl text-white mb-6 md:mb-8 leading-[1.1] max-w-5xl shadow-black drop-shadow-2xl tracking-tight animate-fade-in-up delay-100 line-clamp-4">{profile.title}</h1>
+            <p className="text-lg md:text-2xl text-gray-100 italic max-w-3xl font-serif md:border-l-4 border-yellow-600 md:pl-8 leading-snug drop-shadow-lg animate-fade-in-up delay-200 line-clamp-3">"{profile.intro}"</p>
           </div>
         </div>
       </div>
@@ -355,47 +347,84 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
         <div className="container mx-auto max-w-5xl">
           <div className="flex flex-col gap-12">
             <div className="prose prose-invert prose-lg max-w-none">
-              <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 first-letter:text-7xl first-letter:font-serif first-letter:text-yellow-600 first-letter:float-left first-letter:mr-4 first-letter:mt-[-8px] mb-12 font-light tracking-wide">{profile.content.bodyParagraphs[0]}</p>
+              
+              {/* Paragraph 0 */}
+              {paragraphs[0] && (
+                 <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 first-letter:text-7xl first-letter:font-serif first-letter:text-yellow-600 first-letter:float-left first-letter:mr-4 first-letter:mt-[-8px] mb-12 font-light tracking-wide">{paragraphs[0]}</p>
+              )}
+              
               <SmartAdUnit slotId="1624191321" format="auto" className="w-full max-w-4xl mx-auto" />
-              <div className="my-16 relative group overflow-hidden shadow-2xl border border-white/5">
-                <OptimizedImage src={profile.images[0]} className="w-full h-[400px] md:h-[800px] object-cover transition-transform duration-1000 group-hover:scale-105" alt="Editorial 1" />
-              </div>
-              <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-12 tracking-wide font-light">{profile.content.bodyParagraphs[1]}</p>
+              
+              {profile.gallery_urls[0] && (
+                <div className="my-16 relative group overflow-hidden shadow-2xl border border-white/5">
+                  <OptimizedImage src={profile.gallery_urls[0]} className="w-full h-[400px] md:h-[800px] object-cover transition-transform duration-1000 group-hover:scale-105" alt="Editorial 1" />
+                </div>
+              )}
+
+              {/* Paragraph 1 */}
+              {paragraphs[1] && (
+                  <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-12 tracking-wide font-light">{paragraphs[1]}</p>
+              )}
+              
               <InteractionBanner name={profile.name} type="whatsapp" onNext={handleRandomNext} />
-              <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-16 tracking-wide font-light">{profile.content.bodyParagraphs[2]}</p>
+              
+              {/* Paragraph 2 */}
+              {paragraphs[2] && (
+                  <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-16 tracking-wide font-light">{paragraphs[2]}</p>
+              )}
+
               <div className="my-20 p-6 md:p-10 bg-gradient-to-r from-yellow-900/20 to-black border border-yellow-600/30 rounded-lg relative overflow-hidden">
                  <div className="absolute top-0 right-0 p-4 opacity-10"><Lightbulb size={120} className="text-yellow-600" /></div>
                  <h4 className="text-yellow-500 font-bold uppercase tracking-widest text-sm mb-4 flex items-center gap-2"><Lock size={14} /> Segredo de Mercado</h4>
                  <h3 className="font-serif text-2xl text-white mb-6">A Estratégia Oculta</h3>
-                 <p className="text-lg text-gray-100 leading-relaxed relative z-10 font-medium">{profile.content.insiderSecret}</p>
-                 <div className="mt-8 flex gap-3 flex-wrap">{profile.content.keywords.slice(0,3).map(kw => (<span key={kw} className="text-xs bg-yellow-600/10 text-yellow-500 px-3 py-1 rounded border border-yellow-600/20">{kw}</span>))}</div>
+                 <p className="text-lg text-gray-100 leading-relaxed relative z-10 font-medium">{profile.insider_secret}</p>
+                 {profile.keywords && (
+                    <div className="mt-8 flex gap-3 flex-wrap">{profile.keywords.slice(0,3).map(kw => (<span key={kw} className="text-xs bg-yellow-600/10 text-yellow-500 px-3 py-1 rounded border border-yellow-600/20">{kw}</span>))}</div>
+                 )}
               </div>
+              
               <SmartAdUnit slotId="6844728415" format="fluid" className="w-full" />
+              
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8 my-20">
-                 <div className="h-[400px] md:h-[500px] md:mt-12 shadow-lg border border-white/5">
-                    <OptimizedImage src={profile.images[1]} className="w-full h-full object-cover grayscale hover:grayscale-0 transition-all duration-1000" alt="Detail 1" />
-                 </div>
-                 <div className="h-[400px] md:h-[500px] shadow-lg border border-white/5">
-                    <OptimizedImage src={profile.images[2]} className="w-full h-full object-cover grayscale hover:grayscale-0 transition-all duration-1000" alt="Detail 2" />
-                 </div>
+                 {profile.gallery_urls[1] && (
+                   <div className="h-[400px] md:h-[500px] md:mt-12 shadow-lg border border-white/5">
+                      <OptimizedImage src={profile.gallery_urls[1]} className="w-full h-full object-cover grayscale hover:grayscale-0 transition-all duration-1000" alt="Detail 1" />
+                   </div>
+                 )}
+                 {profile.gallery_urls[2] && (
+                   <div className="h-[400px] md:h-[500px] shadow-lg border border-white/5">
+                      <OptimizedImage src={profile.gallery_urls[2]} className="w-full h-full object-cover grayscale hover:grayscale-0 transition-all duration-1000" alt="Detail 2" />
+                   </div>
+                 )}
               </div>
-              <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-12 tracking-wide font-light">{profile.content.bodyParagraphs[3]}</p>
-              <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-12 tracking-wide font-light">{profile.content.bodyParagraphs[4]}</p>
+              
+              {/* Paragraphs 3 & 4 */}
+              {paragraphs[3] && <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-12 tracking-wide font-light">{paragraphs[3]}</p>}
+              {paragraphs[4] && <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-12 tracking-wide font-light">{paragraphs[4]}</p>}
+              
               <InteractionBanner name={profile.name} type="vip" onNext={handleRandomNext} />
               <SmartAdUnit slotId="1006896613" format="auto" className="w-full max-w-[336px] mx-auto" />
+              
               <div className="my-24 border-l-4 border-white pl-8 md:pl-12 py-4">
                  <h3 className="font-serif text-3xl text-white mb-6">O Veredito da Lumière</h3>
-                 <p className="text-xl text-gray-200 italic font-serif leading-relaxed">"{profile.content.expertVerdict}"</p>
+                 <p className="text-xl text-gray-200 italic font-serif leading-relaxed">"{profile.expert_verdict}"</p>
                  <div className="mt-6 flex items-center gap-4">
-                    <OptimizedImage src={profile.coverImage} className="w-12 h-12 rounded-full object-cover border border-white/20" alt="Author" />
+                    <OptimizedImage src={profile.cover_url} className="w-12 h-12 rounded-full object-cover border border-white/20" alt="Author" />
                     <div><p className="text-sm text-white font-bold uppercase">{profile.name}</p><p className="text-xs text-gray-500">{profile.niche} Specialist</p></div>
                  </div>
               </div>
-              <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-20 tracking-wide font-light">{profile.content.bodyParagraphs[5]}</p>
-              {profile.content.faqs && profile.content.faqs.length > 0 && (
+              
+              {paragraphs[5] && <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-20 tracking-wide font-light">{paragraphs[5]}</p>}
+              
+              {/* If there are more paragraphs, render them here */}
+              {paragraphs.length > 6 && paragraphs.slice(6).map((p, i) => (
+                   <p key={i} className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-12 tracking-wide font-light">{p}</p>
+              ))}
+
+              {profile.faqs && profile.faqs.length > 0 && (
                 <div className="my-24 bg-gray-900/30 p-8 md:p-12 rounded-xl border border-white/5">
                    <h3 className="font-serif text-3xl text-white mb-8 flex items-center gap-3"><HelpCircle className="text-yellow-600" /> Perguntas Frequentes</h3>
-                   <div className="space-y-2">{profile.content.faqs.map((faq, idx) => (<FAQItem key={idx} question={faq.question} answer={faq.answer} />))}</div>
+                   <div className="space-y-2">{profile.faqs.map((faq, idx) => (<FAQItem key={idx} question={faq.question} answer={faq.answer} />))}</div>
                 </div>
               )}
             </div>
@@ -403,7 +432,7 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
           <div className="border-t border-white/10 pt-24 mt-12">
             <h3 className="font-serif text-4xl md:text-5xl text-white text-center mb-16">Galeria Exclusiva</h3>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 auto-rows-[250px] md:auto-rows-[300px]">
-              {profile.images.slice(3, 8).map((img, i) => (
+              {profile.gallery_urls.slice(3, 8).map((img, i) => (
                 <div key={i} className={`relative overflow-hidden group cursor-pointer ${i === 0 || i === 3 ? 'col-span-2 row-span-2' : 'col-span-1 row-span-1'}`}>
                   <OptimizedImage src={img} className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-1000 ease-out" alt={`Gallery ${i+3}`} />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col items-center justify-center gap-3">
@@ -427,7 +456,7 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
                  {relatedMuses.map((related) => (
                    <div key={related.id} onClick={() => onSelectProfile(related)} className="group cursor-pointer flex flex-col transition-transform duration-500 hover:scale-[1.02]">
                      <div className="aspect-[3/4] mb-6 overflow-hidden relative border border-white/10 rounded-sm transition-all duration-500 group-hover:border-yellow-600/50 group-hover:shadow-[0_0_30px_rgba(202,138,4,0.3)]">
-                        <OptimizedImage src={related.coverImage} className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-110" alt={related.name} />
+                        <OptimizedImage src={related.cover_url} className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-110" alt={related.name} />
                         <div className="absolute inset-0 bg-black/20 group-hover:bg-transparent transition-colors duration-500"></div>
                         <div className="absolute top-4 left-4 bg-yellow-600 text-black px-3 py-1 text-[10px] font-bold uppercase tracking-widest z-10 shadow-lg">{related.niche}</div>
                      </div>
@@ -463,11 +492,32 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
     reader.onload = async (event) => {
       try {
         const text = event.target?.result as string;
-        const json = JSON.parse(text) as MuseProfile;
-        if (!json.name || !json.images) throw new Error("JSON inválido: Faltando nome ou imagens.");
-        json.isRemote = false;
-        await onGenerate(json);
-        addLog("SUCESSO: JSON carregado! Pronto para enviar ao fluxo.");
+        // Basic mapping for legacy JSONs if uploaded
+        const json = JSON.parse(text);
+        if (!json.name) throw new Error("JSON inválido: Faltando nome.");
+        
+        // Map legacy to new structure if needed
+        const mappedProfile: MuseProfile = {
+            id: json.id || Date.now().toString(),
+            slug: json.slug || json.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+            name: json.name,
+            niche: json.niche,
+            tagline: json.tagline,
+            physical_description: json.physicalDescription || json.physical_description || "",
+            is_remote: false,
+            title: json.content?.title || json.title || "",
+            intro: json.content?.intro || json.intro || "",
+            body: typeof json.body === 'string' ? json.body : (json.content?.bodyParagraphs || []).join('\n\n'),
+            expert_verdict: json.content?.expertVerdict || json.expert_verdict || "",
+            insider_secret: json.content?.insiderSecret || json.insider_secret || "",
+            cover_url: json.coverImage || json.cover_url || "",
+            gallery_urls: json.images || json.gallery_urls || [],
+            keywords: json.content?.keywords || json.keywords,
+            faqs: json.content?.faqs || json.faqs
+        };
+
+        await onGenerate(mappedProfile);
+        addLog("SUCESSO: JSON carregado e adaptado!");
       } catch (err: any) {
         addLog(`ERRO: ${err.message}`);
         alert("Erro ao ler JSON. Verifique o formato.");
@@ -489,13 +539,14 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
       
       try {
           // COMPRESS IMAGES BEFORE SENDING
-          const optimizedCover = await compressImage(muse.coverImage);
-          const optimizedImages = await Promise.all(muse.images.map(img => compressImage(img)));
+          const optimizedCover = await compressImage(muse.cover_url);
+          const optimizedImages = await Promise.all(muse.gallery_urls.map(img => compressImage(img)));
           
+          // Construct payload matching the DB structure exactly
           const payload = { 
              ...muse, 
-             coverImage: optimizedCover, 
-             images: optimizedImages 
+             cover_url: optimizedCover, 
+             gallery_urls: optimizedImages 
           };
 
           addLog(`Enviando dados para n8n (${muse.name})...`);
@@ -595,16 +646,30 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
       
       while(galleryImages.length < 5) galleryImages.push(coverImage); 
 
+      // Transform raw AI JSON to flat Database Structure
       const newMuse: MuseProfile = {
         id: Date.now().toString(),
+        slug: inputs.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, ''),
         name: inputs.name,
         niche: inputs.niche,
         tagline: content.tagline,
-        coverImage: coverImage,
-        images: galleryImages,
-        physicalDescription: inputs.details,
-        content: content,
-        isRemote: false
+        physical_description: inputs.details,
+        is_remote: false,
+        
+        // Editorial mapped fields
+        title: content.title,
+        intro: content.intro,
+        body: content.bodyParagraphs ? content.bodyParagraphs.join('\n\n') : "",
+        expert_verdict: content.expertVerdict,
+        insider_secret: content.insiderSecret,
+        
+        // Images mapped fields
+        cover_url: coverImage,
+        gallery_urls: galleryImages,
+        
+        // Extras
+        keywords: content.keywords,
+        faqs: content.faqs
       };
 
       await onGenerate(newMuse);
@@ -617,7 +682,7 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
     const blob = new Blob([JSON.stringify(muse, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = `${muse.id}.json`; a.click();
+    a.href = url; a.download = `${muse.slug || muse.id}.json`; a.click();
   };
 
   return (
@@ -662,8 +727,8 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
              <div key={muse.id} className="flex items-center justify-between bg-gray-900 p-4 rounded border border-white/5 hover:border-yellow-600/50 transition-colors group">
                 <div className="flex items-center gap-4">
                   <div className="relative">
-                     <img src={muse.coverImage} className="w-12 h-12 rounded-full object-cover border border-white/10" />
-                     {muse.isRemote ? (
+                     <img src={muse.cover_url} className="w-12 h-12 rounded-full object-cover border border-white/10" />
+                     {muse.is_remote ? (
                         <div className="absolute -bottom-1 -right-1 bg-green-500 rounded-full p-[2px] border-2 border-black"><CheckCircle size={10} className="text-black" fill="currentColor" /></div>
                      ) : (
                         <div className="absolute -bottom-1 -right-1 bg-gray-500 rounded-full p-[2px] border-2 border-black"><HardDrive size={10} className="text-white" /></div>
@@ -672,7 +737,7 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
                   <div>
                     <h4 className="text-white font-bold flex items-center gap-2">
                        {muse.name}
-                       {muse.isRemote ? (
+                       {muse.is_remote ? (
                           <span className="text-[10px] bg-green-900/50 text-green-400 px-2 py-[2px] rounded border border-green-800 uppercase tracking-widest flex items-center gap-1"><Globe2 size={10} /> Processado</span>
                        ) : (
                           <span className="text-[10px] bg-gray-800 text-gray-400 px-2 py-[2px] rounded border border-gray-700 uppercase tracking-widest flex items-center gap-1"><HardDrive size={10} /> Pendente</span>
@@ -685,10 +750,10 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
                    <button 
                      onClick={() => handleSaveClick(muse)} 
                      disabled={publishing === muse.id}
-                     className={`flex items-center gap-2 px-3 py-2 border transition-colors text-xs font-bold uppercase tracking-wide rounded ${publishing === muse.id ? 'bg-yellow-600 border-yellow-600 text-black' : (muse.isRemote ? 'bg-gray-800 border-gray-600 text-gray-400 hover:bg-gray-700' : 'bg-green-900/30 border-green-600 text-green-500 hover:bg-green-600 hover:text-white')}`}
+                     className={`flex items-center gap-2 px-3 py-2 border transition-colors text-xs font-bold uppercase tracking-wide rounded ${publishing === muse.id ? 'bg-yellow-600 border-yellow-600 text-black' : (muse.is_remote ? 'bg-gray-800 border-gray-600 text-gray-400 hover:bg-gray-700' : 'bg-green-900/30 border-green-600 text-green-500 hover:bg-green-600 hover:text-white')}`}
                    >
                      {publishing === muse.id ? <Loader2 className="animate-spin" size={14}/> : <Send size={14} />} 
-                     {publishing === muse.id ? 'Enviando...' : (muse.isRemote ? 'Reenviar' : 'Enviar para Workflow')}
+                     {publishing === muse.id ? 'Enviando...' : (muse.is_remote ? 'Reenviar' : 'Enviar para Workflow')}
                    </button>
                    <button onClick={() => handleDownloadSingle(muse)} className="flex items-center gap-2 px-3 py-2 bg-black border border-white/20 text-white hover:text-yellow-500 hover:border-yellow-500 transition-colors text-xs font-bold uppercase tracking-wide rounded"><FileJson size={14} /> JSON</button>
                    <button onClick={() => onDelete(muse.id)} className="text-gray-600 hover:text-red-500 p-2 transition-colors"><Trash2 size={18} /></button>
@@ -722,8 +787,26 @@ const App: React.FC = () => {
       try {
         const { data, error } = await supabase.from('muses').select('*').order('created_at', { ascending: false });
         if (data) {
-            const remote = data.map((row: any) => ({ ...row.profile_data, id: row.id, isRemote: true }));
-            const remoteIds = new Set(remote.map((r: MuseProfile) => r.id));
+            // Data matches new interface directly
+            const remote: MuseProfile[] = data.map((row: any) => ({
+                id: row.id,
+                slug: row.slug,
+                name: row.name,
+                niche: row.niche,
+                tagline: row.tagline,
+                physical_description: row.physical_description,
+                is_remote: true, // Always true for supabase
+                title: row.title,
+                intro: row.intro,
+                body: row.body,
+                expert_verdict: row.expert_verdict,
+                insider_secret: row.insider_secret,
+                cover_url: row.cover_url,
+                gallery_urls: row.gallery_urls || [],
+                // Keywords/Faqs might be null if not in DB schema, handled optionally
+            }));
+            
+            const remoteIds = new Set(remote.map((r) => r.id));
             const uniqueLocal = local.filter((l: MuseProfile) => !remoteIds.has(l.id));
             setMuses([...remote, ...uniqueLocal]);
         }
@@ -740,13 +823,13 @@ const App: React.FC = () => {
     // Save to local instantly
     const updated = [newMuse, ...muses];
     setMuses(updated);
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated.filter(m => !m.isRemote)));
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated.filter(m => !m.is_remote)));
   };
 
   const saveToN8N = async (muse: MuseProfile) => {
       // Esta função é chamada pelo Dashboard APÓS o sucesso do fetch.
-      // Ela apenas atualiza o estado local para "isRemote = true"
-      const updatedMuse = { ...muse, isRemote: true };
+      // Ela apenas atualiza o estado local para "is_remote = true"
+      const updatedMuse = { ...muse, is_remote: true };
       
       const local = loadLocalMuses().filter((m: MuseProfile) => m.id !== muse.id);
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(local));
@@ -755,7 +838,6 @@ const App: React.FC = () => {
 
   const handleDelete = async (id: string) => {
     if (confirm("Excluir este perfil (Local e Banco)?")) {
-      // Tenta deletar do supabase se existir (via API publica, se RLS permitir, senao falha silenciosamente)
       try { await supabase.from('muses').delete().eq('id', id); } catch(e) {}
       
       const local = loadLocalMuses().filter((m: MuseProfile) => m.id !== id);
@@ -784,7 +866,7 @@ const App: React.FC = () => {
                        {muses.map(muse => (
                          <div key={muse.id} onClick={() => handleSelectProfile(muse)} className="group cursor-pointer">
                             <div className="aspect-[3/4] overflow-hidden relative mb-6 border border-white/10 shadow-lg">
-                               <OptimizedImage src={muse.coverImage} className="w-full h-full object-cover transition-transform duration-1000 group-hover:scale-110" alt={muse.name} />
+                               <OptimizedImage src={muse.cover_url} className="w-full h-full object-cover transition-transform duration-1000 group-hover:scale-110" alt={muse.name} />
                                <div className="absolute inset-0 bg-black/20 group-hover:bg-transparent transition-all duration-500"></div>
                                <div className="absolute top-4 left-4 bg-white/10 backdrop-blur-md border border-white/20 text-white px-3 py-1 text-[10px] font-bold uppercase tracking-widest">{muse.niche}</div>
                             </div>

@@ -4,22 +4,31 @@ export type ViewState = 'HOME' | 'PROFILE' | 'DASHBOARD';
 
 export interface MuseProfile {
   id: string;
+  slug: string; // URL slug
   name: string;
   niche: string; // High CPM Niche title
   tagline: string;
-  coverImage: string;
-  physicalDescription?: string; // Used for AI consistency
-  images: string[]; // Array of 8 images
-  isRemote?: boolean; // True se já estiver publicado no GitHub/Site
-  content: {
-    title: string;
-    intro: string;
-    bodyParagraphs: string[]; // Increased to 6 paragraphs for depth
-    keywords: string[]; // High CPM keywords to highlight
-    expertVerdict: string; // Summary/Conclusion for SEO
-    faqs: Array<{ question: string; answer: string }>; // For Google Featured Snippets
-    insiderSecret: string; // High CTR Box content
-  };
+  
+  // Editorial Content
+  title: string;
+  intro: string;
+  body: string; // Long text string (paragraphs joined)
+  expert_verdict: string; // Summary/Conclusion
+  insider_secret: string; // High CTR Box content
+  
+  // Physical/AI details
+  physical_description: string;
+  
+  // Images
+  cover_url: string; // Public URL or Base64 (local)
+  gallery_urls: string[]; // Array of Public URLs or Base64 (local)
+  
+  // Metadata
+  is_remote: boolean; // True if from Supabase
+  
+  // Optional extras (kept for local generation/legacy support if needed)
+  keywords?: string[]; 
+  faqs?: Array<{ question: string; answer: string }>;
 }
 
 export interface NavItem {
