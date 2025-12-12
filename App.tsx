@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { GoogleGenAI } from "@google/genai";
+import { createClient } from '@supabase/supabase-js';
 import { 
   Menu, 
   X, 
@@ -42,19 +43,20 @@ import {
   MessageCircle,
   Smartphone,
   Heart,
-  Wifi,     
-  WifiOff,
-  FileUp // Added for JSON Upload icon
+  Image as ImageIcon,
+  FileUp
 } from 'lucide-react';
 import { MuseProfile, ViewState, DashboardInputs } from './types';
-import { db, storage } from './firebaseConfig';
-import { collection, onSnapshot, setDoc, doc, deleteDoc } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 // --- CONFIGURATION ---
 const ADSENSE_PUB_ID = "ca-pub-0000000000000000"; 
 
-// --- INITIAL DATA & STORAGE ---
+// --- SUPABASE CONFIGURATION ---
+const SUPABASE_URL = 'https://wdjddlkbudtncskgawgh.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndkamRkbGtidWR0bmNza2dhd2doIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDY3MjEzMDgsImV4cCI6MjA2MjI5NzMwOH0.speHlbECXo_IMbMz3AO10C7ubU72kS1kRJNF5LH_Z0w';
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// --- INITIAL DATA ---
 const INITIAL_MUSES: MuseProfile[] = [];
 
 // --- HELPER: API Key Handler ---
@@ -84,54 +86,39 @@ const cleanAndParseJSON = (text: string) => {
 // --- HELPER: Delay for Rate Limiting ---
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// --- HELPER: Base64 to WebP Conversion ---
-const convertBase64ToWebP = (base64: string): Promise<Blob> => {
+// --- HELPER: Image Conversion to WebP ---
+// Converts Base64/Blob to optimized WebP Blob for Supabase Storage
+const convertToWebP = (base64Str: string, maxWidth = 1200, quality = 0.8): Promise<Blob> => {
   return new Promise((resolve, reject) => {
-    // Basic validation to prevent hanging on bad data
-    if (!base64 || typeof base64 !== 'string') {
-        reject(new Error("Invalid base64 data"));
-        return;
-    }
-
     const img = new Image();
-    
-    // Timeout safeguard: if image doesn't load in 8s, reject
-    const timeout = setTimeout(() => {
-        reject(new Error("Image load timeout during conversion"));
-    }, 8000);
-
-    img.src = base64;
-    img.crossOrigin = "anonymous"; 
-    
+    img.src = base64Str;
     img.onload = () => {
-      clearTimeout(timeout);
-      try {
-          const canvas = document.createElement('canvas');
-          canvas.width = img.width;
-          canvas.height = img.height;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            reject(new Error("Canvas context not available"));
-            return;
-          }
-          ctx.drawImage(img, 0, 0);
-          // Convert to WebP with 0.85 quality
-          canvas.toBlob((blob) => {
-            if (blob) {
-              resolve(blob);
-            } else {
-              reject(new Error("WebP conversion failed (empty blob)"));
-            }
-          }, 'image/webp', 0.85);
-      } catch (err) {
-          reject(err);
+      const canvas = document.createElement('canvas');
+      let width = img.width;
+      let height = img.height;
+      
+      if (width > maxWidth) {
+        height = (height * maxWidth) / width;
+        width = maxWidth;
       }
+      
+      canvas.width = width;
+      canvas.height = height;
+      
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+          reject(new Error("Canvas context failed"));
+          return;
+      }
+      
+      ctx.drawImage(img, 0, 0, width, height);
+      
+      canvas.toBlob((blob) => {
+          if (blob) resolve(blob);
+          else reject(new Error("WebP conversion failed"));
+      }, 'image/webp', quality);
     };
-    
-    img.onerror = (e) => {
-        clearTimeout(timeout);
-        reject(new Error("Image load error"));
-    };
+    img.onerror = (err) => reject(err);
   });
 };
 
@@ -350,6 +337,7 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
 
   const relatedMuses = allMuses.filter(m => m.id !== profile.id).sort(() => 0.5 - Math.random()).slice(0, 3);
 
+  // LOOP INFINITO: Pega um perfil aleatório DIFERENTE do atual
   const handleRandomNext = () => {
      const others = allMuses.filter(m => m.id !== profile.id);
      if (others.length > 0) {
@@ -498,22 +486,20 @@ const ProfilePage: React.FC<{ profile: MuseProfile; allMuses: MuseProfile[]; onS
 };
 
 // --- DASHBOARD ---
-const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; onDelete: (id: string) => Promise<void>; muses: MuseProfile[]; }> = ({ onGenerate, onDelete, muses }) => {
+const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; onDelete: (id: string) => Promise<void>; onExport: () => void; onImport: (e: React.ChangeEvent<HTMLInputElement>) => void; muses: MuseProfile[]; onSaveToSupabase: (muse: MuseProfile) => Promise<void>; }> = ({ onGenerate, onDelete, onExport, onImport, muses, onSaveToSupabase }) => {
   const [inputs, setInputs] = useState<DashboardInputs>({ niche: '', name: '', details: '' });
   const [loading, setLoading] = useState(false);
   const [publishing, setPublishing] = useState<string | null>(null);
-  const [connectionStatus, setConnectionStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [logs, setLogs] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  const addLog = (msg: string) => setLogs(prev => [...prev, `> ${msg}`]);
 
-  const addLog = (msg: string) => setLogs(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev]);
-
-  // --- JSON UPLOAD HANDLER ---
   const handleJsonUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    addLog(`Carregando arquivo: ${file.name}...`);
+    addLog(`Lendo arquivo: ${file.name}...`);
     const reader = new FileReader();
     reader.onload = async (event) => {
       try {
@@ -522,123 +508,56 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
         
         // Basic validation
         if (!json.name || !json.images) {
-            throw new Error("Formato inválido. Necessário 'name' e 'images'.");
+            throw new Error("JSON inválido: Faltando nome ou imagens.");
         }
 
-        // Ensure ID is unique and not remote yet
-        json.id = Date.now().toString(); 
+        // Force as local draft so user must click "Send to DB"
         json.isRemote = false;
 
         await onGenerate(json);
-        addLog("Sucesso: Perfil carregado do JSON! Agora clique em 'Salvar no DB'.");
+        addLog("SUCESSO: JSON carregado! Clique em 'Enviar p/ Banco' para publicar.");
       } catch (err: any) {
-        addLog(`Erro ao ler JSON: ${err.message}`);
-        alert("Erro ao ler o arquivo JSON. Verifique o formato.");
+        addLog(`ERRO: ${err.message}`);
+        alert("Erro ao ler JSON. Verifique o formato.");
       }
     };
     reader.readAsText(file);
-    // Reset input
     if(fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  // --- FIREBASE TEST CONNECTION ---
-  const handleTestConnection = async () => {
-    setConnectionStatus('testing');
-    addLog("Iniciando teste de conexão com Firestore...");
-    try {
-      const testRef = doc(db, "system", "connection_check");
-      await setDoc(testRef, {
-        last_check: new Date().toISOString(),
-        status: "active",
-        agent: navigator.userAgent
-      });
-      setConnectionStatus('success');
-      addLog("SUCESSO: Conexão verificada! Gravação permitida.");
-      alert("Conexão com Banco de Dados: OK! ✅\n\nAs gravações estão funcionando corretamente.");
-    } catch (e: any) {
-      console.error(e);
-      setConnectionStatus('error');
-      addLog(`FALHA DE CONEXÃO: ${e.message}`);
-      alert(`ERRO DE CONEXÃO ❌\n\nDetalhe: ${e.message}\n\nDica: Verifique se as 'Regras' (Rules) do Firestore estão em 'Modo de Teste' (allow read, write: if true).`);
-    }
-  };
+  const handleSaveToCloud = async (muse: MuseProfile) => {
+      setPublishing(muse.id);
+      addLog(`Preparando upload para Supabase...`);
+      try {
+          await onSaveToSupabase(muse);
+          addLog(`SUCESSO: ${muse.name} salva na nuvem.`);
+      } catch (e: any) {
+          console.error(e);
+          addLog(`ERRO: ${e.message}`);
+          
+          if (e.message?.includes("row-level security") || e.code === "42501") {
+            const sqlFix = `
+-- COPY AND RUN THIS IN SUPABASE SQL EDITOR:
+drop policy if exists "Public Muses are viewable by everyone" on muses;
+drop policy if exists "Anyone can select muses" on muses;
+drop policy if exists "Anyone can insert muses" on muses;
+drop policy if exists "Anyone can update muses" on muses;
+drop policy if exists "Anyone can delete muses" on muses;
 
-  // --- FIREBASE PUBLISH ---
-  const publishToFirebase = async (muse: MuseProfile) => {
-    setPublishing(muse.id);
-    addLog(`Iniciando publicação no Banco de Dados...`);
-
-    try {
-       // 1. Upload Cover
-       addLog(`Processando capa...`);
-       let coverUrl = muse.coverImage;
-       
-       if (!muse.coverImage.startsWith('http')) {
-           try {
-             const coverBlob = await convertBase64ToWebP(muse.coverImage);
-             const coverRef = ref(storage, `muses/${muse.id}/cover.webp`);
-             await uploadBytes(coverRef, coverBlob);
-             coverUrl = await getDownloadURL(coverRef);
-             addLog("Capa enviada.");
-           } catch (coverErr) {
-             console.error("Erro na capa, usando original", coverErr);
-             addLog("Aviso: Falha na conversão da capa, verifique o console.");
-             // Continue even if cover fails optimization (optional fallback logic could be here)
-           }
-       }
-       
-       // 2. Upload Gallery
-       const imageUrls: string[] = [];
-       let count = 1;
-       const uniqueImages = Array.from(new Set(muse.images));
-       
-       for (const imgBase64 of uniqueImages) {
-           if (imgBase64.startsWith('http')) {
-               imageUrls.push(imgBase64); // Already a URL
-               continue;
-           }
-           
-           try {
-             addLog(`Enviando foto ${count}/${uniqueImages.length}...`);
-             // Add timeout safeguard to prevent hanging
-             const blob = await convertBase64ToWebP(imgBase64);
-             const imgRef = ref(storage, `muses/${muse.id}/gallery_${count}.webp`);
-             await uploadBytes(imgRef, blob);
-             const url = await getDownloadURL(imgRef);
-             imageUrls.push(url);
-           } catch (imgErr: any) {
-             console.error(`Erro na imagem ${count}:`, imgErr);
-             addLog(`Erro na foto ${count}, pulando...`);
-           }
-           count++;
-       }
-
-       // Fill to maintain structure logic (fallback to cover if gallery failed)
-       if (imageUrls.length === 0) imageUrls.push(coverUrl);
-       while(imageUrls.length < 8) {
-           imageUrls.push(imageUrls[0]); 
-       }
-
-       addLog("Salvando metadados no Firestore...");
-       const firestoreData: MuseProfile = {
-           ...muse,
-           coverImage: coverUrl,
-           images: imageUrls,
-           isRemote: true
-       };
-
-       await setDoc(doc(db, "muses", muse.id), firestoreData);
-       
-       addLog("SUCESSO! Publicado na nuvem.");
-       alert(`Sucesso! ${muse.name} foi salva no banco de dados.`);
-
-    } catch (err: any) {
-       console.error(err);
-       addLog(`ERRO DE PUBLICAÇÃO: ${err.message}`);
-       alert("Erro ao publicar no Firebase. Verifique o console.");
-    } finally {
-       setPublishing(null);
-    }
+create policy "Public Muses are viewable by everyone" on muses for select using (true);
+create policy "Anyone can insert muses" on muses for insert with check (true);
+create policy "Anyone can update muses" on muses for update using (true);
+create policy "Anyone can delete muses" on muses for delete using (true);
+alter table muses enable row level security;
+            `;
+            alert("ERRO DE PERMISSÃO (RLS) NO SUPABASE!\n\nVocê precisa adicionar as políticas de segurança no banco de dados.\n\nVerifique o console (F12) para pegar o código SQL necessário.");
+            console.warn("⚠️ CORREÇÃO NECESSÁRIA NO SUPABASE ⚠️\nRode este SQL no 'SQL Editor':\n", sqlFix);
+          } else {
+            alert(`Erro no Supabase: ${e.message}`);
+          }
+      } finally {
+          setPublishing(null);
+      }
   };
 
   const generateRandomPersona = async () => {
@@ -837,33 +756,14 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
         
         <div className="bg-gray-900 p-6 rounded-lg border border-white/10 mb-12 flex flex-wrap gap-4 items-center justify-between">
            <div><h3 className="text-white font-bold uppercase tracking-widest text-sm mb-1">Gerenciamento de Dados</h3><p className="text-gray-500 text-xs">Total: {muses.length} modelos</p></div>
-           
            <div className="flex gap-4">
-              {/* HIDDEN FILE INPUT */}
-              <input type="file" accept=".json" ref={fileInputRef} onChange={handleJsonUpload} className="hidden" />
-              
-              <button 
-                onClick={() => fileInputRef.current?.click()}
-                className="flex items-center gap-2 px-4 py-2 text-xs font-bold uppercase tracking-wide rounded border bg-blue-900/40 border-blue-500 text-blue-400 hover:bg-blue-800 transition-colors"
-              >
-                 <FileUp size={16} /> Carregar JSON
+              <input type="file" ref={fileInputRef} onChange={handleJsonUpload} className="hidden" accept=".json" />
+              <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 bg-blue-900/30 text-blue-400 border border-blue-600/50 hover:bg-blue-900/50 px-4 py-2 rounded text-xs font-bold uppercase tracking-widest transition-colors">
+                  <FileUp size={14} /> Carregar JSON
               </button>
-
-              <button 
-                onClick={handleTestConnection}
-                disabled={connectionStatus === 'testing'}
-                className={`flex items-center gap-2 px-4 py-2 text-xs font-bold uppercase tracking-wide rounded border transition-colors ${
-                    connectionStatus === 'success' ? 'bg-green-900/40 border-green-500 text-green-400' : 
-                    connectionStatus === 'error' ? 'bg-red-900/40 border-red-500 text-red-400' : 
-                    'bg-gray-800 border-gray-600 text-gray-300 hover:bg-gray-700'
-                }`}
-              >
-                 {connectionStatus === 'testing' ? <Loader2 className="animate-spin" size={16} /> : <Activity size={16} />}
-                 {connectionStatus === 'testing' ? 'Testando...' : 'Testar Conexão'}
-              </button>
-              
-              <div className="flex items-center gap-2 px-6 py-3 bg-green-900/20 text-green-500 text-sm font-bold uppercase tracking-wide rounded-sm border border-green-500/30">
-                 <Database size={18} /> Banco de Dados Ativo
+              <div className="flex items-center gap-2 text-green-500 bg-green-900/10 px-4 py-2 rounded border border-green-900/30">
+                  <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                  <span className="text-xs font-bold uppercase tracking-widest">Supabase Conectado</span>
               </div>
            </div>
         </div>
@@ -890,9 +790,9 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
                     <h4 className="text-white font-bold flex items-center gap-2">
                        {muse.name}
                        {muse.isRemote ? (
-                          <span className="text-[10px] bg-green-900/50 text-green-400 px-2 py-[2px] rounded border border-green-800 uppercase tracking-widest flex items-center gap-1"><Database size={10} /> Salvo no DB</span>
+                          <span className="text-[10px] bg-green-900/50 text-green-400 px-2 py-[2px] rounded border border-green-800 uppercase tracking-widest flex items-center gap-1"><Globe2 size={10} /> Live</span>
                        ) : (
-                          <span className="text-[10px] bg-gray-800 text-gray-400 px-2 py-[2px] rounded border border-gray-700 uppercase tracking-widest flex items-center gap-1"><HardDrive size={10} /> Rascunho</span>
+                          <span className="text-[10px] bg-gray-800 text-gray-400 px-2 py-[2px] rounded border border-gray-700 uppercase tracking-widest flex items-center gap-1"><HardDrive size={10} /> Local</span>
                        )}
                     </h4>
                     <p className="text-xs text-gray-500">{muse.niche} <span className="text-gray-700 mx-2">|</span> ID: {muse.id}</p>
@@ -901,17 +801,15 @@ const Dashboard: React.FC<{ onGenerate: (data: MuseProfile) => Promise<void>; on
                 <div className="flex items-center gap-2">
                    {/* ACTION BUTTONS */}
                    <button 
-                    onClick={() => publishToFirebase(muse)} 
-                    disabled={publishing === muse.id}
-                    className={`flex items-center gap-2 px-3 py-2 border transition-colors text-xs font-bold uppercase tracking-wide rounded ${publishing === muse.id ? 'bg-yellow-600 border-yellow-600 text-black' : (muse.isRemote ? 'bg-gray-800 border-gray-600 text-gray-400 hover:bg-gray-700' : 'bg-green-900/30 border-green-600 text-green-500 hover:bg-green-600 hover:text-white')}`}
-                    >
-                    {publishing === muse.id ? <Loader2 className="animate-spin" size={14}/> : <CloudUpload size={14} />} 
-                    {publishing === muse.id ? 'Enviando ao DB...' : (muse.isRemote ? 'Atualizar DB' : 'Salvar no DB')}
+                     onClick={() => handleSaveToCloud(muse)} 
+                     disabled={publishing === muse.id}
+                     className={`flex items-center gap-2 px-3 py-2 border transition-colors text-xs font-bold uppercase tracking-wide rounded ${publishing === muse.id ? 'bg-yellow-600 border-yellow-600 text-black' : (muse.isRemote ? 'bg-gray-800 border-gray-600 text-gray-400 hover:bg-gray-700' : 'bg-green-900/30 border-green-600 text-green-500 hover:bg-green-600 hover:text-white')}`}
+                   >
+                     {publishing === muse.id ? <Loader2 className="animate-spin" size={14}/> : <CloudUpload size={14} />} 
+                     {publishing === muse.id ? 'Salvando...' : (muse.isRemote ? 'Atualizar' : 'Enviar p/ Banco')}
                    </button>
-
-                   {!muse.isRemote && (
-                      <button onClick={() => handleDownloadSingle(muse)} className="flex items-center gap-2 px-3 py-2 bg-black border border-white/20 text-white hover:text-yellow-500 hover:border-yellow-500 transition-colors text-xs font-bold uppercase tracking-wide rounded"><FileJson size={14} /> JSON</button>
-                   )}
+                   
+                   <button onClick={() => handleDownloadSingle(muse)} className="flex items-center gap-2 px-3 py-2 bg-black border border-white/20 text-white hover:text-yellow-500 hover:border-yellow-500 transition-colors text-xs font-bold uppercase tracking-wide rounded"><FileJson size={14} /> JSON</button>
                    <button onClick={() => onDelete(muse.id)} className="text-gray-600 hover:text-red-500 p-2 transition-colors"><Trash2 size={18} /></button>
                 </div>
              </div>
@@ -927,39 +825,105 @@ const App: React.FC = () => {
   const [muses, setMuses] = useState<MuseProfile[]>(INITIAL_MUSES);
   const [selectedProfile, setSelectedProfile] = useState<MuseProfile | null>(null);
 
-  useEffect(() => {
-    // Escutar mudanças no Firestore em tempo real
-    const unsubscribe = onSnapshot(collection(db, "muses"), (snapshot) => {
-        const remoteMuses: MuseProfile[] = [];
-        snapshot.forEach((doc) => {
-            remoteMuses.push(doc.data() as MuseProfile);
-        });
-        
-        setMuses(prev => {
-            // Mantém os rascunhos locais que ainda não foram salvos no DB
-            const localDrafts = prev.filter(p => !p.isRemote && !remoteMuses.find(rm => rm.id === p.id));
-            const merged = [...remoteMuses, ...localDrafts];
-            return merged.sort((a, b) => Number(b.id) - Number(a.id));
-        });
-    });
+  // FETCH MUSES FROM SUPABASE
+  const fetchMuses = async () => {
+      const { data, error } = await supabase
+        .from('muses')
+        .select('*')
+        .order('created_at', { ascending: false });
+      
+      if (error) {
+          console.error("Error fetching muses:", error);
+          return;
+      }
 
-    return () => unsubscribe();
+      if (data) {
+          const mappedMuses: MuseProfile[] = data.map((row: any) => ({
+             ...row.profile_data,
+             id: row.id,
+             isRemote: true
+          }));
+          setMuses(mappedMuses);
+      }
+  };
+
+  useEffect(() => {
+    fetchMuses();
   }, []);
 
   const handleGenerate = async (newMuse: MuseProfile) => {
-    // Apenas adiciona ao estado localmente como rascunho
+    // Adiciona temporariamente como rascunho local
     setMuses(prev => [newMuse, ...prev]);
   };
 
+  const saveToSupabase = async (muse: MuseProfile) => {
+     // 1. Upload Images to Bucket
+     const uploadedImageUrls: string[] = [];
+     let uploadedCoverUrl = muse.coverImage;
+
+     // Helper to upload one file
+     const uploadFile = async (base64: string, path: string) => {
+         // Skip if already a URL
+         if (base64.startsWith('http')) return base64;
+         
+         const blob = await convertToWebP(base64);
+         const { data, error } = await supabase.storage
+            .from('lumiere')
+            .upload(path, blob, { contentType: 'image/webp', upsert: true });
+         
+         if (error) throw error;
+         
+         const { data: urlData } = supabase.storage.from('lumiere').getPublicUrl(path);
+         return urlData.publicUrl;
+     };
+
+     // Upload Cover
+     if (!muse.coverImage.startsWith('http')) {
+        uploadedCoverUrl = await uploadFile(muse.coverImage, `muses/${muse.id}/cover.webp`);
+     }
+
+     // Upload Gallery
+     let idx = 0;
+     for (const img of muse.images) {
+        if (!img.startsWith('http')) {
+            const url = await uploadFile(img, `muses/${muse.id}/gallery_${idx}.webp`);
+            uploadedImageUrls.push(url);
+        } else {
+            uploadedImageUrls.push(img);
+        }
+        idx++;
+     }
+
+     const finalProfile: MuseProfile = {
+         ...muse,
+         coverImage: uploadedCoverUrl,
+         images: uploadedImageUrls,
+         isRemote: true
+     };
+
+     // 2. Upsert Database Row
+     const { error } = await supabase
+        .from('muses')
+        .upsert({
+            id: finalProfile.id,
+            name: finalProfile.name,
+            niche: finalProfile.niche,
+            profile_data: finalProfile
+        });
+
+     if (error) throw error;
+
+     // Refresh List
+     await fetchMuses();
+  };
+
   const handleDelete = async (id: string) => {
-    if (confirm("Tem certeza que deseja excluir este perfil do Banco de Dados?")) {
-      try {
-          // Deleta do Firestore (não deleta do Storage automaticamente, mas remove da lista)
-          await deleteDoc(doc(db, "muses", id));
-          // Atualiza estado local imediatamente
+    if (confirm("Tem certeza que deseja excluir este perfil do banco de dados?")) {
+      const { error } = await supabase.from('muses').delete().eq('id', id);
+      if (error) {
+          alert("Erro ao deletar: " + error.message);
+      } else {
           setMuses(prev => prev.filter(m => m.id !== id));
-      } catch (e) {
-          console.error("Erro ao deletar", e);
       }
     }
   };
@@ -1035,6 +999,9 @@ const App: React.FC = () => {
             onGenerate={handleGenerate} 
             onDelete={handleDelete} 
             muses={muses} 
+            onExport={() => {}} 
+            onImport={(e) => {}} 
+            onSaveToSupabase={saveToSupabase}
          />
        )}
     </div>
