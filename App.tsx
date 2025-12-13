@@ -52,6 +52,29 @@ const App: React.FC = () => {
     return () => window.removeEventListener('popstate', handlePopState);
   }, [loading, muses]);
 
+  // 3. Google Analytics Tracking (SPA Support)
+  useEffect(() => {
+    if (typeof window !== 'undefined' && (window as any).gtag) {
+      let pagePath = '/';
+      let pageTitle = 'LUMIÈRE | Exclusive Muse Collective';
+
+      if (view === 'PROFILE' && selectedProfile) {
+        pagePath = `/profile/${selectedProfile.slug || selectedProfile.id}`;
+        pageTitle = `${selectedProfile.name} | Lumière`;
+      } else if (view === 'DASHBOARD') {
+        pagePath = '/dashboard';
+        pageTitle = 'Dashboard | Lumière';
+      }
+
+      // Envia evento de visualização de página manual
+      (window as any).gtag('event', 'page_view', {
+        page_title: pageTitle,
+        page_path: pagePath,
+        send_to: 'G-ZP6M2Z1EYD'
+      });
+    }
+  }, [view, selectedProfile]);
+
   const fetchMuses = async () => {
     setLoading(true);
     setError(null);

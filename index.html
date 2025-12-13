@@ -71,6 +71,30 @@
                 gray: "#2A2A2A",
               },
             },
+            animation: {
+              'slow-zoom': 'slow-zoom 20s linear infinite alternate',
+              'fade-in': 'fade-in 1s ease-out forwards',
+              'fade-in-up': 'fade-in-up 1s ease-out forwards',
+              'shimmer': 'shimmer 2s infinite',
+            },
+            keyframes: {
+              'slow-zoom': {
+                '0%': { transform: 'scale(1)' },
+                '100%': { transform: 'scale(1.1)' },
+              },
+              'fade-in': {
+                'from': { opacity: '0' },
+                'to': { opacity: '1' },
+              },
+              'fade-in-up': {
+                'from': { opacity: '0', transform: 'translateY(20px)' },
+                'to': { opacity: '1', transform: 'translateY(0)' },
+              },
+              'shimmer': {
+                '0%': { transform: 'translateX(-100%)' },
+                '100%': { transform: 'translateX(100%)' },
+              }
+            }
           },
         },
       };
@@ -109,7 +133,18 @@
       }
     </script>
     
-    <!-- Google AdSense Global - Instalado no final do HEAD para garantir execução correta -->
+    <!-- Google Analytics 4 (GA4) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-ZP6M2Z1EYD"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+
+      // Configuração inicial com seu ID
+      gtag('config', 'G-ZP6M2Z1EYD');
+    </script>
+
+    <!-- Google AdSense Global -->
     <script
       async
       src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6058225169212979"
