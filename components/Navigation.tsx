@@ -19,24 +19,36 @@ const Navigation: React.FC<NavigationProps> = ({ onNavigate, currentView }) => {
 
   const handleMenuClick = (item: string) => {
     setIsMobileMenuOpen(false);
+    
     if (item === 'Talentos' || item === 'Nichos') {
-      const hash = item === 'Talentos' ? '#profiles' : '#niches';
+      const targetId = item === 'Talentos' ? 'profiles' : 'niches';
       
       if (currentView !== 'HOME') {
-        // Force reload to home with anchor
-        window.location.href = '/' + hash;
+        // Navega para Home sem recarregar
+        onNavigate('HOME');
+        // Pequeno delay para garantir que a Home renderizou antes de rolar
+        setTimeout(() => {
+           const el = document.getElementById(targetId);
+           if (el) el.scrollIntoView({ behavior: 'smooth' });
+        }, 100);
       } else {
-        // Just scroll if already on home
-        document.getElementById(hash.replace('#', ''))?.scrollIntoView({ behavior: 'smooth' });
+        // Já está na home, só rola
+        document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth' });
       }
     }
+    
     if (item === 'Partner Dashboard') {
-        if (currentView !== 'DASHBOARD') window.location.href = '/?view=dashboard';
+        if (currentView !== 'DASHBOARD') onNavigate('DASHBOARD');
     }
   };
 
   const handleLogoClick = () => {
-    window.location.href = '/';
+    // Navegação instantânea para o topo da Home
+    if (currentView !== 'HOME') {
+        onNavigate('HOME');
+    } else {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   };
 
   return (

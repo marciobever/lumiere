@@ -15,6 +15,7 @@ interface ProfilePageProps {
 const ProfilePage: React.FC<ProfilePageProps> = ({ profile, allMuses, onSelectProfile, onBack }) => {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
+  // Scroll to top on profile change
   useEffect(() => { 
     window.scrollTo(0, 0); 
     const seoDescription = profile.intro || `Conheça ${profile.name}, especialista em ${profile.niche}.`;
@@ -48,7 +49,6 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ profile, allMuses, onSelectPr
      }
   };
 
-  // ID do bloco que sabemos que funciona (mesmo da Home)
   const GLOBAL_AD_SLOT = "1624191321";
 
   return (
@@ -104,7 +104,8 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ profile, allMuses, onSelectPr
                  <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 first-letter:text-7xl first-letter:font-serif first-letter:text-yellow-600 first-letter:float-left first-letter:mr-4 first-letter:mt-[-8px] mb-12 font-light tracking-wide">{paragraphs[0]}</p>
               )}
               
-              {/* Ad Unit 1: Top Content - Usando container limpo para evitar conflito com prose */}
+              {/* Ad Unit 1: Top Content */}
+              {/* A KEY ÚNICA (profile.id) força o React a desmontar e remontar este componente quando muda de página. Isso garante que o AdSense carregue um novo banner. */}
               <div className="not-prose w-full my-8">
                 <SmartAdUnit key={`ad-top-${profile.id}`} slotId={GLOBAL_AD_SLOT} format="auto" className="w-full" />
               </div>
@@ -138,7 +139,7 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ profile, allMuses, onSelectPr
                  )}
               </div>
               
-              {/* Ad Unit 2: Middle Content - Usando o MESMO ID que funciona */}
+              {/* Ad Unit 2: Middle Content */}
               <div className="not-prose w-full my-8">
                  <SmartAdUnit key={`ad-mid-${profile.id}`} slotId={GLOBAL_AD_SLOT} format="auto" className="w-full" />
               </div>
@@ -167,7 +168,7 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ profile, allMuses, onSelectPr
               
               <InteractionBanner name={profile.name} type="vip" onNext={handleRandomNext} />
               
-              {/* Ad Unit 3: Bottom Content - Usando o MESMO ID que funciona */}
+              {/* Ad Unit 3: Bottom Content */}
               <div className="not-prose w-full my-8">
                  <SmartAdUnit key={`ad-bot-${profile.id}`} slotId={GLOBAL_AD_SLOT} format="auto" className="w-full" />
               </div>

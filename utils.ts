@@ -1,4 +1,3 @@
-
 export const updateMetaTags = (title: string, description: string, image: string) => {
   document.title = title;
   
@@ -39,23 +38,30 @@ export const cleanAndParseJSON = (text: string) => {
 export const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export const compressImage = (base64Str: string, quality = 0.8): Promise<string> => {
-  if (!base64Str || base64Str.startsWith('http')) return Promise.resolve(base64Str || ''); 
+  if (!base64Str || base64Str.startsWith('http') || base64Str.startsWith('https')) return Promise.resolve(base64Str || ''); 
   return new Promise((resolve) => {
     const img = new Image();
+    img.crossOrigin = "Anonymous";
     img.src = base64Str;
     img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(base64Str);
+          return;
+        }
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      } catch (e) {
+        // Fallback for tainted canvas (SecurityError) or other canvas errors
+        console.warn("Canvas compression failed, returning original.", e);
         resolve(base64Str);
-        return;
       }
-      ctx.fillStyle = '#FFFFFF';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0);
-      resolve(canvas.toDataURL('image/jpeg', quality));
     };
     img.onerror = () => resolve(base64Str);
   });

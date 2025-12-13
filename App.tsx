@@ -7,70 +7,61 @@ import ProfilePage from './components/ProfilePage';
 import Dashboard from './components/Dashboard';
 import { OptimizedImage } from './components/Shared';
 import { SmartAdUnit } from './components/AdSense';
-import { Loader2 } from 'lucide-react';
+import { Loader2, RefreshCw } from 'lucide-react';
 
 const App: React.FC = () => {
   const [view, setView] = useState<ViewState>('HOME');
   const [selectedProfile, setSelectedProfile] = useState<MuseProfile | null>(null);
   const [muses, setMuses] = useState<MuseProfile[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   // 1. Fetch Data
   useEffect(() => {
     fetchMuses();
   }, []);
 
-  // 2. Handle Routing based on URL Parameters (WordPress Style)
+  // 2. Handle Initial Routing & Browser Back/Forward Button
   useEffect(() => {
-    if (!loading && muses.length > 0) {
+    const handlePopState = () => {
       const params = new URLSearchParams(window.location.search);
       const profileId = params.get('id');
       const viewParam = params.get('view');
 
-      if (profileId) {
+      if (profileId && muses.length > 0) {
         const foundProfile = muses.find(m => m.id === profileId);
         if (foundProfile) {
           setSelectedProfile(foundProfile);
           setView('PROFILE');
         } else {
-          // ID invalid or deleted, go home
-          window.location.href = '/'; 
+          setView('HOME');
         }
       } else if (viewParam === 'dashboard') {
         setView('DASHBOARD');
       } else {
         setView('HOME');
-        // Handle scroll anchor if hash exists
-        if (window.location.hash) {
-          setTimeout(() => {
-            const element = document.getElementById(window.location.hash.replace('#', ''));
-            element?.scrollIntoView({ behavior: 'smooth' });
-          }, 500);
-        }
+        setSelectedProfile(null);
       }
-    } else if (!loading && muses.length === 0) {
-       // Allow dashboard access even if database is empty
-       const params = new URLSearchParams(window.location.search);
-       if (params.get('view') === 'dashboard') setView('DASHBOARD');
+    };
+
+    if (!loading) {
+       handlePopState();
     }
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
   }, [loading, muses]);
 
   const fetchMuses = async () => {
+    setLoading(true);
+    setError(null);
     try {
-      // Create a timeout to prevent infinite loading
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Connection timeout')), 5000)
-      );
+      // Direct fetch without Promise.race to avoid premature timeouts
+      const { data, error } = await supabase.from('muses').select('*');
       
-      const fetchPromise = supabase.from('muses').select('*');
+      if (error) throw error;
       
-      const response = await Promise.race([fetchPromise, timeoutPromise]) as any;
-      
-      if (response.error) throw response.error;
-      
-      const data = response.data;
       if (data) {
-        // Sanitize data
         const sanitizedData: MuseProfile[] = data.map((m: any) => ({
           ...m,
           gallery_urls: Array.isArray(m.gallery_urls) ? m.gallery_urls : [],
@@ -86,27 +77,37 @@ const App: React.FC = () => {
         }));
         setMuses(sanitizedData);
       }
-    } catch (e) {
-      console.warn("Could not fetch muses (loading empty state).", e);
+    } catch (e: any) {
+      console.error("Could not fetch muses:", e);
+      setError("Não foi possível conectar ao banco de dados.");
     } finally {
       setLoading(false);
     }
   };
 
-  // Force Refresh Navigation (MPA Behavior for Ads)
+  // SPA Navigation Helper
+  const navigateTo = (url: string, newView: ViewState) => {
+     try {
+       window.history.pushState({}, '', url);
+     } catch (e) {
+       console.warn("Navigation history update failed (sandbox):", e);
+     }
+     setView(newView);
+     window.scrollTo(0, 0);
+  };
+
   const handleNavigate = (v: ViewState) => {
-    setLoading(true); // Show loader during redirect
     if (v === 'HOME') {
-       window.location.href = '/';
+       navigateTo('/', 'HOME');
+       setSelectedProfile(null);
     } else if (v === 'DASHBOARD') {
-       window.location.href = '/?view=dashboard';
+       navigateTo('/?view=dashboard', 'DASHBOARD');
     }
   };
 
   const handleSelectProfile = (profile: MuseProfile) => {
-    setLoading(true); // Show loader during redirect
-    // Force browser reload with new ID parameter
-    window.location.href = `/?id=${profile.id}`;
+    setSelectedProfile(profile);
+    navigateTo(`/?id=${profile.id}`, 'PROFILE');
   };
 
   const handleGenerate = async (newMuse: MuseProfile) => {
@@ -138,6 +139,17 @@ const App: React.FC = () => {
      );
   }
 
+  if (error && muses.length === 0) {
+      return (
+        <div className="h-screen bg-black flex flex-col items-center justify-center text-white space-y-6 px-4 text-center">
+            <p className="text-red-500 font-serif text-xl">{error}</p>
+            <button onClick={fetchMuses} className="bg-yellow-600 text-black px-6 py-2 rounded font-bold uppercase tracking-widest flex items-center gap-2 hover:bg-yellow-500 transition-colors">
+                <RefreshCw size={18} /> Tentar Novamente
+            </button>
+        </div>
+      );
+  }
+
   return (
     <div className="bg-[#050505] min-h-screen text-gray-200 font-sans selection:bg-yellow-600 selection:text-black">
        <Navigation onNavigate={handleNavigate} currentView={view} />
@@ -158,9 +170,9 @@ const App: React.FC = () => {
              
              {muses.length === 0 ? (
                 <div className="text-center py-20 border border-dashed border-white/10 rounded-lg">
-                   <p className="text-gray-500 font-serif italic mb-4">A coleção está vazia ou indisponível.</p>
-                   <button onClick={() => window.location.href = '/?view=dashboard'} className="text-yellow-600 hover:text-white transition-colors text-sm uppercase font-bold tracking-widest">
-                      Criar Nova Musa no Dashboard
+                   <p className="text-gray-500 font-serif italic mb-4">A coleção está vazia no momento.</p>
+                   <button onClick={() => navigateTo('/?view=dashboard', 'DASHBOARD')} className="text-yellow-600 hover:text-white transition-colors text-sm uppercase font-bold tracking-widest">
+                      Acessar Dashboard
                    </button>
                 </div>
              ) : (
@@ -181,8 +193,9 @@ const App: React.FC = () => {
                 </div>
              )}
              
+             {/* Ad Unit Home */}
              <div className="mt-20">
-               <SmartAdUnit slotId="1624191321" format="auto" className="w-full max-w-5xl mx-auto" />
+               <SmartAdUnit key="home-ad-bottom" slotId="1624191321" format="auto" className="w-full max-w-5xl mx-auto" />
              </div>
            </main>
            
@@ -204,7 +217,7 @@ const App: React.FC = () => {
             profile={selectedProfile} 
             allMuses={muses} 
             onSelectProfile={handleSelectProfile} 
-            onBack={() => window.location.href = '/'} 
+            onBack={() => navigateTo('/', 'HOME')} 
          />
        )}
 
