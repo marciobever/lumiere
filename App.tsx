@@ -20,11 +20,37 @@ const App: React.FC = () => {
 
   const fetchMuses = async () => {
     try {
-      const { data, error } = await supabase.from('muses').select('*');
-      if (error) throw error;
-      if (data) setMuses(data as unknown as MuseProfile[]);
+      // Create a timeout to prevent infinite loading if Supabase hangs
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Connection timeout')), 5000)
+      );
+      
+      const fetchPromise = supabase.from('muses').select('*');
+      
+      const response = await Promise.race([fetchPromise, timeoutPromise]) as any;
+      
+      if (response.error) throw response.error;
+      
+      const data = response.data;
+      if (data) {
+        // Sanitize data to ensure no null arrays cause crashes later
+        const sanitizedData: MuseProfile[] = data.map((m: any) => ({
+          ...m,
+          gallery_urls: Array.isArray(m.gallery_urls) ? m.gallery_urls : [],
+          keywords: Array.isArray(m.keywords) ? m.keywords : [],
+          faqs: Array.isArray(m.faqs) ? m.faqs : [],
+          cover_url: m.cover_url || '',
+          name: m.name || 'Unnamed',
+          niche: m.niche || 'General',
+          intro: m.intro || '',
+          body: m.body || '',
+          expert_verdict: m.expert_verdict || '',
+          insider_secret: m.insider_secret || ''
+        }));
+        setMuses(sanitizedData);
+      }
     } catch (e) {
-      console.error("Error fetching muses:", e);
+      console.warn("Could not fetch muses from DB (check connection or table existence). Loading empty state.", e);
     } finally {
       setLoading(false);
     }
@@ -42,21 +68,33 @@ const App: React.FC = () => {
 
   const handleGenerate = async (newMuse: MuseProfile) => {
     setMuses(prev => [newMuse, ...prev]);
-    // Optionally persist to Supabase if not handled by n8n
-    // await supabase.from('muses').insert([newMuse]);
+    // Optional: Try to save to DB, but don't block
+    try {
+       await supabase.from('muses').insert([newMuse]);
+    } catch (e) {
+       console.error("Auto-save failed:", e);
+    }
   };
 
   const handleDelete = async (id: string) => {
     setMuses(prev => prev.filter(m => m.id !== id));
-    await supabase.from('muses').delete().eq('id', id);
+    try {
+      await supabase.from('muses').delete().eq('id', id);
+    } catch (e) { console.error("Delete failed:", e); }
   };
 
   const handleSaveToN8N = async (muse: MuseProfile) => {
-     // Placeholder for any post-save actions needed in the parent
      console.log("Saved to N8N:", muse.name);
   };
 
-  if (loading) return <div className="h-screen bg-black flex items-center justify-center text-white"><Loader2 className="animate-spin" size={40}/></div>;
+  if (loading) {
+     return (
+       <div className="h-screen bg-black flex flex-col items-center justify-center text-white space-y-4">
+         <Loader2 className="animate-spin text-yellow-600" size={40}/>
+         <p className="text-gray-500 text-sm tracking-widest uppercase">Carregando Lumière...</p>
+       </div>
+     );
+  }
 
   return (
     <div className="bg-[#050505] min-h-screen text-gray-200 font-sans selection:bg-yellow-600 selection:text-black">
@@ -77,7 +115,12 @@ const App: React.FC = () => {
              </div>
              
              {muses.length === 0 ? (
-                <div className="text-center py-20 text-gray-500 font-serif italic">Nenhuma musa encontrada. Acesse o Dashboard para criar.</div>
+                <div className="text-center py-20 border border-dashed border-white/10 rounded-lg">
+                   <p className="text-gray-500 font-serif italic mb-4">A coleção está vazia ou indisponível.</p>
+                   <button onClick={() => setView('DASHBOARD')} className="text-yellow-600 hover:text-white transition-colors text-sm uppercase font-bold tracking-widest">
+                      Criar Nova Musa no Dashboard
+                   </button>
+                </div>
              ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-16">
                    {muses.map((muse) => (
@@ -101,7 +144,7 @@ const App: React.FC = () => {
               <div className="container mx-auto px-6 text-center">
                  <h2 className="font-serif text-3xl text-white mb-8">Nichos de Atuação</h2>
                  <div className="flex flex-wrap justify-center gap-4">
-                    {Array.from(new Set(muses.map(m => m.niche))).map(niche => (
+                    {Array.from(new Set(muses.map(m => m.niche).filter(Boolean))).map(niche => (
                        <span key={niche} className="px-6 py-3 border border-white/10 hover:border-yellow-600 hover:text-yellow-600 transition-colors cursor-default text-sm uppercase tracking-widest">{niche}</span>
                     ))}
                  </div>
