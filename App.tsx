@@ -5,7 +5,8 @@ import Navigation from './components/Navigation';
 import Hero from './components/Hero';
 import ProfilePage from './components/ProfilePage';
 import Dashboard from './components/Dashboard';
-import { OptimizedImage, SmartAdUnit } from './components/Shared';
+import { OptimizedImage } from './components/Shared';
+import { SmartAdUnit } from './components/AdSense';
 import { Loader2 } from 'lucide-react';
 
 const App: React.FC = () => {

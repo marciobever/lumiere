@@ -1,8 +1,8 @@
-
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, X, Lightbulb, Lock, Maximize2, ArrowRight, HelpCircle } from 'lucide-react';
 import { MuseProfile } from '../types';
-import { OptimizedImage, SmartAdUnit, InteractionBanner, FAQItem } from './Shared';
+import { OptimizedImage, InteractionBanner, FAQItem } from './Shared';
+import { SmartAdUnit } from './AdSense';
 import { updateMetaTags } from '../utils';
 
 interface ProfilePageProps {
