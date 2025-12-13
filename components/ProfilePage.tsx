@@ -101,7 +101,8 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ profile, allMuses, onSelectPr
                  <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 first-letter:text-7xl first-letter:font-serif first-letter:text-yellow-600 first-letter:float-left first-letter:mr-4 first-letter:mt-[-8px] mb-12 font-light tracking-wide">{paragraphs[0]}</p>
               )}
               
-              <SmartAdUnit slotId="1624191321" format="auto" className="w-full max-w-4xl mx-auto" />
+              {/* Ad Unit 1: Top Content */}
+              <SmartAdUnit key={`ad-top-${profile.id}`} slotId="1624191321" format="auto" className="w-full max-w-4xl mx-auto" />
               
               {profile.gallery_urls[0] && (
                 <div 
@@ -132,7 +133,8 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ profile, allMuses, onSelectPr
                  )}
               </div>
               
-              <SmartAdUnit slotId="6844728415" format="fluid" className="w-full" />
+              {/* Ad Unit 2: Middle Content (Changed from fluid to auto/rectangle for safety) */}
+              <SmartAdUnit key={`ad-mid-${profile.id}`} slotId="6844728415" format="rectangle" className="w-full" />
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8 my-20">
                  {profile.gallery_urls[1] && (
@@ -157,7 +159,9 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ profile, allMuses, onSelectPr
               {paragraphs[4] && <p className="text-lg md:text-xl lg:text-2xl leading-relaxed text-gray-200 mb-12 tracking-wide font-light">{paragraphs[4]}</p>}
               
               <InteractionBanner name={profile.name} type="vip" onNext={handleRandomNext} />
-              <SmartAdUnit slotId="1006896613" format="auto" className="w-full max-w-[336px] mx-auto" />
+              
+              {/* Ad Unit 3: Bottom Content */}
+              <SmartAdUnit key={`ad-bot-${profile.id}`} slotId="1006896613" format="auto" className="w-full max-w-[336px] mx-auto" />
               
               <div className="my-24 border-l-4 border-white pl-8 md:pl-12 py-4">
                  <h3 className="font-serif text-3xl text-white mb-6">O Veredito da Lumière</h3>
