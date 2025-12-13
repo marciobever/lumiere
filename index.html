@@ -3,20 +3,33 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    
+
     <!-- SEO & Identity -->
     <title>LUMIÈRE | Exclusive Muse Collective</title>
-    <meta name="description" content="Uma plataforma exclusiva onde a estética refinada encontra a inteligência de mercado. Descubra perfis de alto nível em finanças, luxo e tecnologia.">
-    
+    <meta
+      name="description"
+      content="Uma plataforma exclusiva onde a estética refinada encontra a inteligência de mercado. Descubra perfis de alto nível em finanças, luxo e tecnologia."
+    />
+
     <!-- Favicon (Gold Star/Light Symbol) -->
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23D4AF37'%3E%3Cpath d='M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z'/%3E%3C/svg%3E">
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23D4AF37'%3E%3Cpath d='M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z'/%3E%3C/svg%3E"
+    />
 
     <!-- Open Graph / Facebook / WhatsApp -->
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://lumiere.app/" />
     <meta property="og:title" content="LUMIÈRE | Exclusive Muse Collective" />
-    <meta property="og:description" content="Uma plataforma exclusiva onde a estética refinada encontra a inteligência de mercado." />
-    <meta property="og:image" content="https://images.unsplash.com/photo-1469334031218-e382a71b716b?q=80&w=2070&auto=format&fit=crop" />
+    <meta
+      property="og:description"
+      content="Uma plataforma exclusiva onde a estética refinada encontra a inteligência de mercado."
+    />
+    <meta
+      property="og:image"
+      content="https://images.unsplash.com/photo-1469334031218-e382a71b716b?q=80&w=2070&auto=format&fit=crop"
+    />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta property="og:site_name" content="LUMIÈRE" />
@@ -24,42 +37,60 @@
     <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="LUMIÈRE | Exclusive Muse Collective" />
-    <meta name="twitter:description" content="Uma plataforma exclusiva onde a estética refinada encontra a inteligência de mercado." />
-    <meta name="twitter:image" content="https://images.unsplash.com/photo-1469334031218-e382a71b716b?q=80&w=2070&auto=format&fit=crop" />
+    <meta
+      name="twitter:description"
+      content="Uma plataforma exclusiva onde a estética refinada encontra a inteligência de mercado."
+    />
+    <meta
+      name="twitter:image"
+      content="https://images.unsplash.com/photo-1469334031218-e382a71b716b?q=80&w=2070&auto=format&fit=crop"
+    />
 
-    <!-- Google AdSense -->
-    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6058225169212979" crossorigin="anonymous"></script>
+    <!-- AdSense: preconnect/dns-prefetch ajuda a carregar mais consistente -->
+    <link rel="preconnect" href="https://pagead2.googlesyndication.com" crossorigin />
+    <link rel="dns-prefetch" href="https://pagead2.googlesyndication.com" />
+    <meta name="google-adsense-account" content="ca-pub-6058225169212979" />
+
+    <!-- Google AdSense (correto) -->
+    <script
+      async
+      src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6058225169212979"
+      crossorigin="anonymous"
+    ></script>
 
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&display=swap"
+      rel="stylesheet"
+    />
+
     <script>
       tailwind.config = {
         theme: {
           extend: {
             fontFamily: {
-              sans: ['Inter', 'sans-serif'],
-              serif: ['Playfair Display', 'serif'],
+              sans: ["Inter", "sans-serif"],
+              serif: ["Playfair Display", "serif"],
             },
             colors: {
               brand: {
-                dark: '#0f0f0f',
-                gold: '#D4AF37',
-                cream: '#F5F5F0',
-                gray: '#2A2A2A'
-              }
-            }
-          }
-        }
-      }
+                dark: "#0f0f0f",
+                gold: "#D4AF37",
+                cream: "#F5F5F0",
+                gray: "#2A2A2A",
+              },
+            },
+          },
+        },
+      };
     </script>
+
     <style>
-      /* Smooth scrolling */
       html {
         scroll-behavior: smooth;
       }
-      /* Hide scrollbar for clean aesthetic */
       ::-webkit-scrollbar {
         width: 8px;
       }
@@ -75,20 +106,24 @@
         line-height: 1.8;
       }
     </style>
-  <script type="importmap">
-{
-  "imports": {
-    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.555.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
-    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.39.3"
-  }
-}
-</script>
-</head>
-  <body class="bg-brand-dark text-gray-200 antialiased selection:bg-brand-gold selection:text-black">
+
+    <script type="importmap">
+      {
+        "imports": {
+          "lucide-react": "https://aistudiocdn.com/lucide-react@^0.555.0",
+          "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+          "react": "https://aistudiocdn.com/react@^19.2.0",
+          "react/": "https://aistudiocdn.com/react@^19.2.0/",
+          "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
+          "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.39.3"
+        }
+      }
+    </script>
+  </head>
+
+  <body
+    class="bg-brand-dark text-gray-200 antialiased selection:bg-brand-gold selection:text-black"
+  >
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
   </body>
