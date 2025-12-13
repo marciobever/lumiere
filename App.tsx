@@ -5,7 +5,7 @@ import Navigation from './components/Navigation';
 import Hero from './components/Hero';
 import ProfilePage from './components/ProfilePage';
 import Dashboard from './components/Dashboard';
-import { OptimizedImage } from './components/Shared';
+import { OptimizedImage, SmartAdUnit } from './components/Shared';
 import { Loader2 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -179,6 +179,10 @@ const App: React.FC = () => {
                    ))}
                 </div>
              )}
+             
+             <div className="mt-20">
+               <SmartAdUnit slotId="1624191321" format="auto" className="w-full max-w-5xl mx-auto" />
+             </div>
            </main>
            
            <section id="niches" className="bg-white/5 py-20 mt-20">
