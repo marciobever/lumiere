@@ -1,5 +1,5 @@
 
-export const ADSENSE_PUB_ID = "ca-pub-0000000000000000"; 
+export const ADSENSE_PUB_ID = "ca-pub-6058225169212979"; 
 export const LOCAL_STORAGE_KEY = 'lumiere_muses_backup_v2';
 export const N8N_WEBHOOK_URL = "https://n8n.seureview.com.br/webhook/lumiere"; 
 export const SUPABASE_URL = 'https://wdjddlkbudtncskgawgh.supabase.co';
