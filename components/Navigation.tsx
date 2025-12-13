@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Menu, X, ArrowRight, LayoutDashboard } from 'lucide-react';
 import { ViewState } from '../types';
@@ -21,21 +20,30 @@ const Navigation: React.FC<NavigationProps> = ({ onNavigate, currentView }) => {
   const handleMenuClick = (item: string) => {
     setIsMobileMenuOpen(false);
     if (item === 'Talentos' || item === 'Nichos') {
+      const hash = item === 'Talentos' ? '#profiles' : '#niches';
+      
       if (currentView !== 'HOME') {
-        onNavigate('HOME');
-        setTimeout(() => document.getElementById(item === 'Talentos' ? 'profiles' : 'niches')?.scrollIntoView({ behavior: 'smooth' }), 150);
+        // Force reload to home with anchor
+        window.location.href = '/' + hash;
       } else {
-        document.getElementById(item === 'Talentos' ? 'profiles' : 'niches')?.scrollIntoView({ behavior: 'smooth' });
+        // Just scroll if already on home
+        document.getElementById(hash.replace('#', ''))?.scrollIntoView({ behavior: 'smooth' });
       }
     }
-    if (item === 'Partner Dashboard') onNavigate('DASHBOARD');
+    if (item === 'Partner Dashboard') {
+        if (currentView !== 'DASHBOARD') window.location.href = '/?view=dashboard';
+    }
+  };
+
+  const handleLogoClick = () => {
+    window.location.href = '/';
   };
 
   return (
     <>
       <nav className={`fixed top-0 w-full z-[100] transition-all duration-300 ${scrolled ? 'bg-black/90 backdrop-blur-md py-4 border-b border-white/10 shadow-lg' : 'bg-gradient-to-b from-black/90 to-transparent py-6'}`}>
         <div className="container mx-auto px-6 flex justify-between items-center">
-          <div className="text-2xl font-serif font-black text-white tracking-widest cursor-pointer flex items-center gap-1 z-50 relative" onClick={() => onNavigate('HOME')}>
+          <div className="text-2xl font-serif font-black text-white tracking-widest cursor-pointer flex items-center gap-1 z-50 relative" onClick={handleLogoClick}>
             LUMIÈRE<span className="text-yellow-600 text-3xl">.</span>
           </div>
           <div className="hidden md:flex items-center gap-10">
