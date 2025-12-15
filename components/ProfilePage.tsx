@@ -14,6 +14,8 @@ interface ProfilePageProps {
 
 const ProfilePage: React.FC<ProfilePageProps> = ({ profile, allMuses, onSelectProfile, onBack }) => {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  // Estado para forçar a troca dos banners sempre que a tela é montada
+  const [adSessionKey, setAdSessionKey] = useState<number>(Date.now());
 
   // Scroll to top on profile change
   useEffect(() => { 
@@ -26,6 +28,8 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ profile, allMuses, onSelectPr
         seoDescription + seoKeywords,
         profile.cover_url
     );
+    // Atualiza a chave de sessão de anúncios
+    setAdSessionKey(Date.now());
   }, [profile]);
 
   const relatedMuses = allMuses.filter(m => m.id !== profile.id).sort(() => 0.5 - Math.random()).slice(0, 3);
@@ -85,12 +89,12 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ profile, allMuses, onSelectPr
         <div className="absolute inset-0 bg-gradient-to-t from-[#050505] via-[#050505]/90 to-transparent opacity-100"></div>
         <div className="absolute left-0 right-0 bottom-0 z-20 flex flex-col justify-end px-6 md:px-12 pb-20 md:pb-32 pointer-events-none max-h-[55vh]">
           <div className="container mx-auto max-w-7xl pointer-events-auto flex flex-col items-center md:items-start text-center md:text-left">
-            <div className="flex flex-wrap justify-center md:justify-start items-center gap-4 mb-6 md:mb-8 animate-fade-in-up">
+            <div className="flex flex-wrap justify-center md:justify-start items-center gap-4 mb-6 md:mb-8 animate-fade-in">
                <span className="bg-yellow-600 text-black px-4 py-1.5 text-xs font-bold uppercase tracking-widest shadow-[0_0_15px_rgba(202,138,4,0.3)]">{profile.niche}</span>
                <span className="text-gray-300 text-xs uppercase tracking-widest border-l border-gray-500 pl-4 drop-shadow-md">12 min de leitura</span>
             </div>
-            <h1 className="font-serif text-3xl sm:text-4xl md:text-5xl lg:text-7xl text-white mb-6 md:mb-8 leading-[1.1] max-w-5xl shadow-black drop-shadow-2xl tracking-tight animate-fade-in-up delay-100 line-clamp-4">{profile.title}</h1>
-            <p className="text-lg md:text-2xl text-gray-100 italic max-w-3xl font-serif md:border-l-4 border-yellow-600 md:pl-8 leading-snug drop-shadow-lg animate-fade-in-up delay-200 line-clamp-3">"{profile.intro}"</p>
+            <h1 className="font-serif text-3xl sm:text-4xl md:text-5xl lg:text-7xl text-white mb-6 md:mb-8 leading-[1.1] max-w-5xl shadow-black drop-shadow-2xl tracking-tight animate-fade-in line-clamp-4">{profile.title}</h1>
+            <p className="text-lg md:text-2xl text-gray-100 italic max-w-3xl font-serif md:border-l-4 border-yellow-600 md:pl-8 leading-snug drop-shadow-lg animate-fade-in line-clamp-3">"{profile.intro}"</p>
           </div>
         </div>
       </div>
@@ -105,9 +109,8 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ profile, allMuses, onSelectPr
               )}
               
               {/* Ad Unit 1: Top Content */}
-              {/* A KEY ÚNICA (profile.id) força o React a desmontar e remontar este componente quando muda de página. Isso garante que o AdSense carregue um novo banner. */}
               <div className="not-prose w-full my-8">
-                <SmartAdUnit key={`ad-top-${profile.id}`} slotId={GLOBAL_AD_SLOT} format="auto" className="w-full" />
+                <SmartAdUnit key={`ad-top-${profile.id}-${adSessionKey}`} slotId={GLOBAL_AD_SLOT} format="auto" className="w-full" />
               </div>
               
               {profile.gallery_urls[0] && (
@@ -141,7 +144,7 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ profile, allMuses, onSelectPr
               
               {/* Ad Unit 2: Middle Content */}
               <div className="not-prose w-full my-8">
-                 <SmartAdUnit key={`ad-mid-${profile.id}`} slotId={GLOBAL_AD_SLOT} format="auto" className="w-full" />
+                 <SmartAdUnit key={`ad-mid-${profile.id}-${adSessionKey}`} slotId={GLOBAL_AD_SLOT} format="auto" className="w-full" />
               </div>
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8 my-20">
@@ -170,7 +173,7 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ profile, allMuses, onSelectPr
               
               {/* Ad Unit 3: Bottom Content */}
               <div className="not-prose w-full my-8">
-                 <SmartAdUnit key={`ad-bot-${profile.id}`} slotId={GLOBAL_AD_SLOT} format="auto" className="w-full" />
+                 <SmartAdUnit key={`ad-bot-${profile.id}-${adSessionKey}`} slotId={GLOBAL_AD_SLOT} format="auto" className="w-full" />
               </div>
               
               <div className="my-24 border-l-4 border-white pl-8 md:pl-12 py-4">
@@ -223,7 +226,12 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ profile, allMuses, onSelectPr
                </div>
                <div className="grid grid-cols-1 md:grid-cols-3 gap-12">
                  {relatedMuses.map((related) => (
-                   <div key={related.id} onClick={() => onSelectProfile(related)} className="group cursor-pointer flex flex-col transition-transform duration-500 hover:scale-[1.02]">
+                   <a 
+                     key={related.id} 
+                     href={`/?id=${related.id}`}
+                     onClick={(e) => { e.preventDefault(); onSelectProfile(related); }}
+                     className="group cursor-pointer flex flex-col transition-transform duration-500 hover:scale-[1.02] block"
+                   >
                      <div className="aspect-[3/4] mb-6 overflow-hidden relative border border-white/10 rounded-sm transition-all duration-500 group-hover:border-yellow-600/50 group-hover:shadow-[0_0_30px_rgba(202,138,4,0.3)]">
                         <OptimizedImage src={related.cover_url} className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-110" alt={related.name} />
                         <div className="absolute inset-0 bg-black/20 group-hover:bg-transparent transition-colors duration-500"></div>
@@ -231,7 +239,7 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ profile, allMuses, onSelectPr
                      </div>
                      <h4 className="font-serif text-2xl text-white mb-2 group-hover:text-yellow-600 transition-colors duration-300">{related.name}</h4>
                      <p className="text-sm text-gray-500 line-clamp-2 group-hover:text-gray-400 transition-colors duration-300">{related.tagline}</p>
-                   </div>
+                   </a>
                  ))}
                </div>
             </div>

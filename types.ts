@@ -41,3 +41,11 @@ export interface DashboardInputs {
   name: string;
   details: string;
 }
+
+export interface SocialPost {
+  museId: string;
+  text: string;
+  imageUrl: string;
+  link: string;
+  vibe: 'seductive' | 'story' | 'insider' | 'sales';
+}

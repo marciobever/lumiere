@@ -15,6 +15,8 @@ const App: React.FC = () => {
   const [muses, setMuses] = useState<MuseProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Adiciona um contador para forçar re-render dos anúncios da home ao voltar
+  const [navCounter, setNavCounter] = useState(0);
 
   // 1. Fetch Data
   useEffect(() => {
@@ -27,6 +29,8 @@ const App: React.FC = () => {
       const params = new URLSearchParams(window.location.search);
       const profileId = params.get('id');
       const viewParam = params.get('view');
+      
+      setNavCounter(prev => prev + 1); // Força refresh de anúncios ao usar botão voltar do navegador
 
       if (profileId && muses.length > 0) {
         const foundProfile = muses.find(m => m.id === profileId);
@@ -75,6 +79,46 @@ const App: React.FC = () => {
     }
   }, [view, selectedProfile]);
 
+  // ROBUST ARRAY PARSING TO FIX GALLERY DISAPPEARING
+  const safeParseArray = (val: any) => {
+      if (!val) return [];
+      if (Array.isArray(val)) return val;
+      
+      if (typeof val === 'string') {
+        const cleaned = val.trim();
+        if (!cleaned) return [];
+
+        // 1. Tentar JSON padrão
+        try {
+          const parsed = JSON.parse(cleaned);
+          if (Array.isArray(parsed)) return parsed;
+        } catch (e) {
+          // Ignora erro de JSON e tenta outras formas
+        }
+
+        // 2. Tentar formato de Array Postgres: {url1,url2}
+        if (cleaned.startsWith('{') && cleaned.endsWith('}')) {
+             const content = cleaned.substring(1, cleaned.length - 1); // Remove { e }
+             if (content.length === 0) return [];
+             
+             // Divide por vírgula e limpa aspas se houver
+             return content.split(',').map((s: string) => {
+                 const item = s.trim();
+                 // Remove aspas duplas do início e fim se o Postgres as adicionou
+                 if (item.startsWith('"') && item.endsWith('"')) {
+                     return item.substring(1, item.length - 1);
+                 }
+                 return item;
+             });
+        }
+
+        // 3. Se não for array nem JSON, assume que é uma URL única (string simples)
+        // Mas apenas se parecer uma URL ou base64
+        if (cleaned.length > 10) return [cleaned];
+      }
+      return [];
+  };
+
   const fetchMuses = async () => {
     setLoading(true);
     setError(null);
@@ -87,9 +131,10 @@ const App: React.FC = () => {
       if (data) {
         const sanitizedData: MuseProfile[] = data.map((m: any) => ({
           ...m,
-          gallery_urls: Array.isArray(m.gallery_urls) ? m.gallery_urls : [],
-          keywords: Array.isArray(m.keywords) ? m.keywords : [],
-          faqs: Array.isArray(m.faqs) ? m.faqs : [],
+          // Use safeParseArray for robustness
+          gallery_urls: safeParseArray(m.gallery_urls || m.images),
+          keywords: safeParseArray(m.keywords),
+          faqs: safeParseArray(m.faqs),
           cover_url: m.cover_url || '',
           name: m.name || 'Unnamed',
           niche: m.niche || 'General',
@@ -115,6 +160,7 @@ const App: React.FC = () => {
      } catch (e) {
        console.warn("Navigation history update failed (sandbox):", e);
      }
+     setNavCounter(prev => prev + 1); // Incrementa para renovar anúncios
      setView(newView);
      window.scrollTo(0, 0);
   };
@@ -201,7 +247,12 @@ const App: React.FC = () => {
              ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-16">
                    {muses.map((muse) => (
-                      <div key={muse.id} onClick={() => handleSelectProfile(muse)} className="group cursor-pointer flex flex-col">
+                      <a 
+                        key={muse.id} 
+                        href={`/?id=${muse.id}`}
+                        onClick={(e) => { e.preventDefault(); handleSelectProfile(muse); }}
+                        className="group cursor-pointer flex flex-col block"
+                      >
                          <div className="relative aspect-[3/4] mb-6 overflow-hidden bg-gray-900 border border-white/5 rounded-sm">
                             <OptimizedImage src={muse.cover_url} alt={muse.name} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105 filter grayscale-[30%] group-hover:grayscale-0" />
                             <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-60 group-hover:opacity-40 transition-opacity"></div>
@@ -211,14 +262,14 @@ const App: React.FC = () => {
                          </div>
                          <h3 className="font-serif text-3xl text-white mb-2 group-hover:text-yellow-600 transition-colors">{muse.name}</h3>
                          <p className="text-gray-400 text-sm line-clamp-2 font-light leading-relaxed group-hover:text-gray-300">{muse.tagline || muse.intro}</p>
-                      </div>
+                      </a>
                    ))}
                 </div>
              )}
              
-             {/* Ad Unit Home */}
+             {/* Ad Unit Home - Key com navCounter força refresh ao voltar para Home */}
              <div className="mt-20">
-               <SmartAdUnit key="home-ad-bottom" slotId="1624191321" format="auto" className="w-full max-w-5xl mx-auto" />
+               <SmartAdUnit key={`home-ad-bottom-${navCounter}`} slotId="1624191321" format="auto" className="w-full max-w-5xl mx-auto" />
              </div>
            </main>
            
